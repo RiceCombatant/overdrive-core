@@ -417,7 +417,9 @@ namespace Overdrive
         const MechController& mech,
         const WeaponSystem& weapons,
         const std::vector<TargetDummy>& targets,
-        const TargetLockSystem& lockSystem)
+        const TargetLockSystem& lockSystem,
+        const std::vector<RemoteMech>* remoteMechs,
+        const NetworkManager* network)
     {
         if (!m_isAvailable || !m_isSessionRunning || !renderer) return false;
 
@@ -452,6 +454,7 @@ namespace Overdrive
                 (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
                 (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0);
 
+            m_trackingValid = trackingValid;
             if (trackingValid)
             {
                 XMFLOAT3 cockpitPos = mech.GetCockpitHeadPosition();
@@ -459,13 +462,32 @@ namespace Overdrive
                 XMVECTOR quatMechYaw = XMQuaternionRotationRollPitchYaw(0.0f, mechYaw, 0.0f);
                 XMMATRIX rotMechY = XMMatrixRotationY(mechYaw);
 
-                for (int i = 0; i < 2; ++i)
+                XrPosef centerPose = m_views[0].pose;
+                centerPose.position.x = (m_views[0].pose.position.x + m_views[1].pose.position.x) * 0.5f;
+                centerPose.position.y = (m_views[0].pose.position.y + m_views[1].pose.position.y) * 0.5f;
+                centerPose.position.z = (m_views[0].pose.position.z + m_views[1].pose.position.z) * 0.5f;
+
+                XMVECTOR hmdCenterLocal = XMVectorSet(centerPose.position.x, centerPose.position.y, -centerPose.position.z, 0.0f);
+                XMVECTOR hmdCenterRot = XMVectorSet(-centerPose.orientation.x, -centerPose.orientation.y, centerPose.orientation.z, centerPose.orientation.w);
+
+                XMVECTOR headWorldPos = XMVector3TransformCoord(hmdCenterLocal, rotMechY) + XMLoadFloat3(&cockpitPos);
+                XMVECTOR headWorldRot = XMQuaternionMultiply(hmdCenterRot, quatMechYaw);
+
+                XMStoreFloat3(&m_hmdWorldPos, headWorldPos);
+                XMVECTOR fwd = XMVector3Rotate(XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), headWorldRot);
+                XMStoreFloat3(&m_hmdWorldForward, XMVector3Normalize(fwd));
+
+                XMMATRIX headMat = XMMatrixRotationQuaternion(headWorldRot) * XMMatrixTranslationFromVector(headWorldPos);
+                m_hmdView = XMMatrixInverse(nullptr, headMat);
+                m_hmdProj = CreateProjectionFromFov(m_views[0].fov, 0.05f, 1000.0f);
+
+                for (uint32_t i = 0; i < 2; ++i)
                 {
                     auto& eye = m_eyes[i];
 
                     // 1. Acquire Image
-                    uint32_t imageIndex = 0;
                     XrSwapchainImageAcquireInfo acqInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+                    uint32_t imageIndex = 0;
                     res = xrAcquireSwapchainImage(eye.swapchain, &acqInfo, &imageIndex);
                     if (res != XR_SUCCESS) continue;
 
@@ -498,7 +520,9 @@ namespace Overdrive
                         weapons,
                         targets,
                         lockSystem,
-                        (i == 0)
+                        (i == 0),
+                        remoteMechs,
+                        network
                     );
 
                     // 5. Release Image

@@ -32,6 +32,8 @@ namespace Overdrive
     class TargetDummy;
     class TargetLockSystem;
     class D3D11Renderer;
+    class RemoteMech;
+    class NetworkManager;
 
     struct VREyeData
     {
@@ -71,12 +73,21 @@ namespace Overdrive
             const MechController& mech,
             const WeaponSystem& weapons,
             const std::vector<TargetDummy>& targets,
-            const TargetLockSystem& lockSystem
+            const TargetLockSystem& lockSystem,
+            const std::vector<RemoteMech>* remoteMechs = nullptr,
+            const NetworkManager* network = nullptr
         );
 
         // Eye matrices (world space view & projection for left/right eye)
         XMMATRIX GetEyeView(int eye) const { return m_eyeView[eye]; }
         XMMATRIX GetEyeProj(int eye) const { return m_eyeProj[eye]; }
+
+        // Center head pose in world space (for HMD gaze targeting)
+        XMFLOAT3 GetHmdPosition() const { return m_hmdWorldPos; }
+        XMFLOAT3 GetHmdForward() const { return m_hmdWorldForward; }
+        XMMATRIX GetHmdView() const { return m_hmdView; }
+        XMMATRIX GetHmdProj() const { return m_hmdProj; }
+        bool HasValidTracking() const { return m_trackingValid; }
 
     private:
         bool CreateInstance();
@@ -105,6 +116,12 @@ namespace Overdrive
         XMMATRIX m_eyeView[2];
         XMMATRIX m_eyeProj[2];
         uint32_t m_currentImageIndices[2] = { 0, 0 };
+
+        bool m_trackingValid = false;
+        XMFLOAT3 m_hmdWorldPos = { 0.0f, 0.0f, 0.0f };
+        XMFLOAT3 m_hmdWorldForward = { 0.0f, 0.0f, 1.0f };
+        XMMATRIX m_hmdView = XMMatrixIdentity();
+        XMMATRIX m_hmdProj = XMMatrixIdentity();
 
         // Desktop Mirror
         ComPtr<ID3D11ShaderResourceView> m_mirrorSRV;

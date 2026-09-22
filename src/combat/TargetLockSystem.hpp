@@ -15,11 +15,14 @@ namespace Overdrive
 
     class MechController;
     class AudioManager;
+    class RemoteMech;
 
     struct LockTargetInfo
     {
         bool hasTarget = false;
         int targetIndex = -1;
+        bool isRemoteMech = false;
+        uint8_t remotePlayerId = 0; // 0 to 3
         XMFLOAT3 worldPos = { 0.0f, 0.0f, 0.0f };
         XMFLOAT2 screenNdc = { 0.0f, 0.0f }; // -1 to 1 in normalized device coords
         float distance = 0.0f;
@@ -42,11 +45,14 @@ namespace Overdrive
             const std::vector<TargetDummy>& targets,
             float yawDelta,
             float pitchDelta,
-            AudioManager* audio = nullptr);
+            AudioManager* audio = nullptr,
+            const XMMATRIX* overrideViewProj = nullptr,
+            const XMFLOAT3* overrideEyePos = nullptr,
+            const std::vector<RemoteMech>* remoteMechs = nullptr);
 
         const LockTargetInfo& GetCurrentTarget() const { return m_targetInfo; }
         XMFLOAT2 GetInnerReticlePos() const { return m_currentReticleNdc; }
-        XMFLOAT3 GetAimWorldTarget(const Camera& camera) const;
+        XMFLOAT3 GetAimWorldTarget(const Camera& camera, const XMFLOAT3* overrideLookTarget = nullptr) const;
 
     private:
         bool m_isHardLockEnabled = false;

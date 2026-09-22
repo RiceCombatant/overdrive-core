@@ -4,6 +4,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <cmath>
+#include <iostream>
 
 namespace Overdrive
 {
@@ -388,5 +389,49 @@ namespace Overdrive
             bool isThrusterActive = m_boostOn || m_isAssaultBoost || input.jumpHold || (m_qbTimer > 0.0f);
             audio->UpdateBoostSound(isThrusterActive, speedRatio, m_position);
         }
+
+        // 11. Health & Respawn Timers
+        if (m_hitFlashTimer > 0.0f) m_hitFlashTimer -= deltaTime;
+        if (m_isDestroyed)
+        {
+            m_respawnTimer -= deltaTime;
+            if (m_respawnTimer <= 0.0f)
+            {
+                Respawn();
+            }
+        }
+    }
+
+    void MechController::TakeDamage(float damage)
+    {
+        if (m_isDestroyed) return;
+
+        m_currentHp = std::max(0.0f, m_currentHp - damage);
+        m_hitFlashTimer = 0.15f;
+
+        if (m_currentHp <= 0.0f)
+        {
+            m_isDestroyed = true;
+            m_respawnTimer = 3.5f;
+            std::cout << "[COMBAT] LOCAL MECH DESTROYED! Respawning in 3.5s..." << std::endl;
+        }
+    }
+
+    void MechController::Respawn(const XMFLOAT3& spawnPos, float spawnYaw)
+    {
+        m_currentHp = m_maxHp;
+        m_isDestroyed = false;
+        m_hitFlashTimer = 0.0f;
+        m_position = spawnPos;
+        m_yaw = spawnYaw;
+        m_pitch = 0.0f;
+        m_roll = 0.0f;
+        m_velocity = { 0.0f, 0.0f, 0.0f };
+        if (m_character)
+        {
+            m_character->SetPosition(JPH::RVec3(spawnPos.x, spawnPos.y, spawnPos.z));
+            m_character->SetLinearVelocity(JPH::Vec3::sZero());
+        }
+        std::cout << "[COMBAT] LOCAL MECH RESPAWNED at (" << spawnPos.x << ", " << spawnPos.y << ", " << spawnPos.z << ")!" << std::endl;
     }
 }

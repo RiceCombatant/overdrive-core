@@ -1,6 +1,7 @@
 #include "combat/TargetLockSystem.hpp"
 #include "core/MechController.hpp"
 #include "audio/AudioManager.hpp"
+#include "network/NetworkManager.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -57,18 +58,29 @@ namespace Overdrive
         const std::vector<TargetDummy>& targets,
         float yawDelta,
         float pitchDelta,
-        AudioManager* audio)
+        AudioManager* audio,
+        const XMMATRIX* overrideViewProj,
+        const XMFLOAT3* overrideEyePos,
+        const std::vector<RemoteMech>* remoteMechs)
     {
         if (deltaTime <= 0.0f) return;
 
         float mouseDeltaLen = std::sqrt(yawDelta * yawDelta + pitchDelta * pitchDelta);
 
         // 1. Calculate View-Projection Matrix
-        XMMATRIX viewMat = camera.GetViewMatrix();
-        XMMATRIX projMat = camera.GetProjectionMatrix(16.0f / 9.0f);
-        XMMATRIX viewProj = XMMatrixMultiply(viewMat, projMat);
+        XMMATRIX viewProj;
+        if (overrideViewProj)
+        {
+            viewProj = *overrideViewProj;
+        }
+        else
+        {
+            XMMATRIX viewMat = camera.GetViewMatrix();
+            XMMATRIX projMat = camera.GetProjectionMatrix(16.0f / 9.0f);
+            viewProj = XMMatrixMultiply(viewMat, projMat);
+        }
 
-        XMFLOAT3 mechPos = mech.GetPosition();
+        XMFLOAT3 mechPos = overrideEyePos ? *overrideEyePos : mech.GetPosition();
 
         // 2. Gather all visible alive target candidates
         struct TargetCandidate {
@@ -77,8 +89,45 @@ namespace Overdrive
             XMFLOAT3 worldPos;
             float worldDist;
             float screenDist;
+            bool isRemoteMech;
+            uint8_t remotePlayerId;
         };
         std::vector<TargetCandidate> candidates;
+
+        // Check RemoteMechs (Enemy players) first!
+        if (remoteMechs)
+        {
+            for (const auto& rMech : *remoteMechs)
+            {
+                if (!rMech.IsAlive()) continue;
+
+                XMFLOAT3 pos = rMech.GetPosition();
+                pos.y += 0.8f; // Aim at core center
+
+                XMVECTOR worldVec = XMVectorSet(pos.x, pos.y, pos.z, 1.0f);
+                XMVECTOR clipVec  = XMVector4Transform(worldVec, viewProj);
+                XMFLOAT4 clip;
+                XMStoreFloat4(&clip, clipVec);
+
+                if (clip.w > 0.1f)
+                {
+                    float ndcX = clip.x / clip.w;
+                    float ndcY = clip.y / clip.w;
+                    float ndcZ = clip.z / clip.w;
+
+                    if (ndcZ >= 0.0f && ndcZ <= 1.0f)
+                    {
+                        float screenDist = std::sqrt(ndcX * ndcX + ndcY * ndcY);
+                        float dx = pos.x - mechPos.x;
+                        float dy = pos.y - mechPos.y;
+                        float dz = pos.z - mechPos.z;
+                        float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                        candidates.push_back({ 1000 + static_cast<int>(rMech.GetPlayerId()), { ndcX, ndcY }, pos, worldDist, screenDist, true, rMech.GetPlayerId() });
+                    }
+                }
+            }
+        }
 
         for (int i = 0; i < static_cast<int>(targets.size()); ++i)
         {
@@ -108,7 +157,7 @@ namespace Overdrive
             float dz = pos.z - mechPos.z;
             float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-            candidates.push_back({ i, { ndcX, ndcY }, pos, worldDist, screenDist });
+            candidates.push_back({ i, { ndcX, ndcY }, pos, worldDist, screenDist, false, 0 });
         }
 
         // AC6 Target Switching Mechanic:
@@ -177,6 +226,8 @@ namespace Overdrive
 
         // 3. Find best primary target in view
         int bestIdx = -1;
+        bool bestIsRemote = false;
+        uint8_t bestPlayerId = 0;
         float bestScore = 999999.0f;
         XMFLOAT2 bestNdc = { 0.0f, 0.0f };
         XMFLOAT3 bestWorldPos = { 0.0f, 0.0f, 0.0f };
@@ -187,13 +238,16 @@ namespace Overdrive
             float maxScreenDist = (m_isHardLockEnabled && m_lockedTargetIndex == c.idx) ? 1.40f : 0.85f;
             if (c.screenDist < maxScreenDist && c.worldDist < 450.0f)
             {
-                float bonus = (m_isHardLockEnabled && m_lockedTargetIndex == c.idx) ? -800.0f : 0.0f;
-                float score = c.screenDist * 120.0f + c.worldDist + bonus;
+                float lockBonus = (m_isHardLockEnabled && m_lockedTargetIndex == c.idx) ? -800.0f : 0.0f;
+                float remoteBonus = c.isRemoteMech ? -500.0f : 0.0f; // Prioritize remote human opponent
+                float score = c.screenDist * 120.0f + c.worldDist + lockBonus + remoteBonus;
 
                 if (score < bestScore)
                 {
                     bestScore = score;
                     bestIdx = c.idx;
+                    bestIsRemote = c.isRemoteMech;
+                    bestPlayerId = c.remotePlayerId;
                     bestNdc = c.ndc;
                     bestWorldPos = c.worldPos;
                     bestDist = c.worldDist;
@@ -212,6 +266,8 @@ namespace Overdrive
 
             m_targetInfo.hasTarget = true;
             m_targetInfo.targetIndex = bestIdx;
+            m_targetInfo.isRemoteMech = bestIsRemote;
+            m_targetInfo.remotePlayerId = bestPlayerId;
             m_targetInfo.worldPos = bestWorldPos;
             m_targetInfo.screenNdc = bestNdc;
             m_targetInfo.distance = bestDist;
@@ -253,11 +309,15 @@ namespace Overdrive
         }
     }
 
-    XMFLOAT3 TargetLockSystem::GetAimWorldTarget(const Camera& camera) const
+    XMFLOAT3 TargetLockSystem::GetAimWorldTarget(const Camera& camera, const XMFLOAT3* overrideLookTarget) const
     {
         if (m_targetInfo.hasTarget)
         {
             return m_targetInfo.worldPos;
+        }
+        if (overrideLookTarget)
+        {
+            return *overrideLookTarget;
         }
         return camera.GetLookTarget();
     }

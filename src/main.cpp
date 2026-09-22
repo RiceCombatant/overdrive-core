@@ -219,17 +219,17 @@ int main(int argc, char* argv[])
 
     Overdrive::NetworkManager network;
     network.Initialize();
-    network.GetRemoteMech().InitializePhysics(physics.get());
+    network.InitializeRemotePhysics(physics.get());
 
     if (netModeStr == "host")
     {
         network.StartHost(netPort);
-        mech.Respawn({ 0.0f, 2.0f, -30.0f }, 0.0f); // South side facing North
+        mech.Respawn({ 0.0f, 2.0f, -40.0f }, 0.0f); // South side facing North
     }
     else if (netModeStr == "client")
     {
         network.StartClient(connectIp, netPort);
-        mech.Respawn({ 0.0f, 2.0f, 30.0f }, 3.14159265f); // North side facing South
+        mech.Respawn({ 0.0f, 2.0f, 40.0f }, 3.14159265f); // North side facing South
     }
 
     // Detect gamepads
@@ -318,12 +318,12 @@ int main(int argc, char* argv[])
                 else if (event.key.scancode == SDL_SCANCODE_H)
                 {
                     network.StartHost(netPort);
-                    mech.Respawn({ 0.0f, 2.0f, -30.0f }, 0.0f);
+                    mech.Respawn({ 0.0f, 2.0f, -40.0f }, 0.0f);
                 }
                 else if (event.key.scancode == SDL_SCANCODE_C)
                 {
                     network.StartClient(connectIp, netPort);
-                    mech.Respawn({ 0.0f, 2.0f, 30.0f }, 3.14159265f);
+                    mech.Respawn({ 0.0f, 2.0f, 40.0f }, 3.14159265f);
                 }
             }
             else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
@@ -452,12 +452,16 @@ int main(int argc, char* argv[])
         // 5.5 Auto-respawn local mech if destroyed
         if (mech.IsDestroyed() && mech.GetRespawnTimer() <= 0.0f)
         {
-            float spawnZ = (network.GetRole() == Overdrive::NetworkRole::Client) ? 30.0f : -30.0f;
-            float spawnYaw = (network.GetRole() == Overdrive::NetworkRole::Client) ? 3.14159265f : 0.0f;
-            mech.Respawn({ 0.0f, 2.0f, spawnZ }, spawnYaw);
+            uint8_t mySlot = network.GetLocalPlayerId();
+            XMFLOAT3 spawnPos = { 0.0f, 2.0f, -40.0f };
+            float spawnYaw = 0.0f;
+            if (mySlot == 1) { spawnPos = { 0.0f, 2.0f, 40.0f }; spawnYaw = 3.14159265f; }
+            else if (mySlot == 2) { spawnPos = { 40.0f, 2.0f, 0.0f }; spawnYaw = -1.5707963f; }
+            else if (mySlot == 3) { spawnPos = { -40.0f, 2.0f, 0.0f }; spawnYaw = 1.5707963f; }
+            mech.Respawn(spawnPos, spawnYaw);
         }
 
-        // 5.6 Update Network Manager (Send 60Hz local state, receive remote packets, update RemoteMech)
+        // 5.6 Update Network Manager (Send 60Hz local state, receive remote packets, update RemoteMechs)
         network.Update(deltaTime, mech, &weapons, &audioManager, physics.get());
 
         bool vrActive = (vrManager->IsAvailable() && vrManager->IsSessionRunning());
@@ -477,16 +481,16 @@ int main(int argc, char* argv[])
             audioManager.UpdateListener(camera.GetEyePosition(), camForward, XMFLOAT3(0.0f, 1.0f, 0.0f));
         }
 
-        // 7. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock with RemoteMech support)
+        // 7. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock with RemoteMechs support)
         if (vrActive && vrManager->HasValidTracking())
         {
             XMMATRIX hmdViewProj = XMMatrixMultiply(vrManager->GetHmdView(), vrManager->GetHmdProj());
             XMFLOAT3 hmdPos = vrManager->GetHmdPosition();
-            targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager, &hmdViewProj, &hmdPos, &network.GetRemoteMech());
+            targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager, &hmdViewProj, &hmdPos, &network.GetRemoteMechs());
         }
         else
         {
-            targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager, nullptr, nullptr, &network.GetRemoteMech());
+            targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager, nullptr, nullptr, &network.GetRemoteMechs());
         }
 
         // 8. Process Shooting (TargetLock aim target if locked, otherwise camera/HMD look target)
@@ -518,8 +522,8 @@ int main(int argc, char* argv[])
             }
         }
 
-        // 9. Update Weapons, Projectiles & Targets (Raycasts against remote mech and dummies)
-        weapons.Update(deltaTime, physics.get(), targets, &audioManager, &network.GetRemoteMech(), &network);
+        // 9. Update Weapons, Projectiles & Targets (Raycasts against remote mechs and dummies)
+        weapons.Update(deltaTime, physics.get(), targets, &audioManager, &network.GetRemoteMechs(), &network);
         for (auto& target : targets)
         {
             target.Update(deltaTime, physics.get());
@@ -528,13 +532,13 @@ int main(int argc, char* argv[])
         // 10. Render Frame (Stereo VR if HMD active, and Desktop window mirror)
         if (vrActive)
         {
-            vrManager->RenderFrame(renderer.get(), mech, weapons, targets, targetLock, &network.GetRemoteMech(), &network);
+            vrManager->RenderFrame(renderer.get(), mech, weapons, targets, targetLock, &network.GetRemoteMechs(), &network);
         }
 
         // Render to Desktop Window (Mirror view)
         // When VR is active, disable desktop VSync to avoid competing with HMD display refresh
         renderer->BeginFrame();
-        renderer->RenderScene(camera, mech, weapons, targets, targetLock, &network.GetRemoteMech(), &network);
+        renderer->RenderScene(camera, mech, weapons, targets, targetLock, &network.GetRemoteMechs(), &network);
         renderer->EndFrame(!vrActive);
     }
 

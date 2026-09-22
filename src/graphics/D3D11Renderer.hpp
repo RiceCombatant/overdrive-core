@@ -23,6 +23,8 @@ namespace Overdrive
     class GridFloor;
     class TargetDummy;
     class TargetLockSystem;
+    class RemoteMech;
+    class NetworkManager;
 
     class D3D11Renderer
     {
@@ -40,7 +42,9 @@ namespace Overdrive
             const MechController& mech,
             const WeaponSystem& weapons,
             const std::vector<TargetDummy>& targets,
-            const TargetLockSystem& lockSystem
+            const TargetLockSystem& lockSystem,
+            const std::vector<RemoteMech>* remoteMechs = nullptr,
+            const NetworkManager* network = nullptr
         );
 
         // OpenXR Stereo VR Eye rendering
@@ -54,7 +58,9 @@ namespace Overdrive
             const WeaponSystem& weapons,
             const std::vector<TargetDummy>& targets,
             const TargetLockSystem& lockSystem,
-            bool isLeftEye
+            bool isLeftEye,
+            const std::vector<RemoteMech>* remoteMechs = nullptr,
+            const NetworkManager* network = nullptr
         );
 
         ID3D11Device* GetDevice() const { return m_device.Get(); }
@@ -75,10 +81,12 @@ namespace Overdrive
         void CleanupRenderTarget();
 
         void RenderMech(const MechController& mech, const XMMATRIX& view, const XMMATRIX& proj, bool isFPV);
+        void RenderEnemyMech(const RemoteMech& remoteMech, const XMMATRIX& view, const XMMATRIX& proj);
         void RenderProjectiles(const WeaponSystem& weapons, const XMMATRIX& view, const XMMATRIX& proj);
         void RenderTargetDummies(const std::vector<TargetDummy>& targets, const XMMATRIX& view, const XMMATRIX& proj);
-        void RenderHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, CameraMode cameraMode);
-        void RenderVRHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, const XMMATRIX& view, const XMMATRIX& proj);
+        void RenderTargetReticles(const std::vector<TargetDummy>& targets, const TargetLockSystem& lockSystem, const XMMATRIX& view, const XMMATRIX& proj, const XMFLOAT3& eyePos, const std::vector<RemoteMech>* remoteMechs = nullptr);
+        void RenderHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, CameraMode cameraMode, const NetworkManager* network = nullptr);
+        void RenderVRHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, const XMMATRIX& view, const XMMATRIX& proj, const NetworkManager* network = nullptr);
 
     private:
         HWND m_hwnd = nullptr;
@@ -106,6 +114,8 @@ namespace Overdrive
 
         // Mech geometry
         ComPtr<ID3D11Buffer> m_mechVertexBuffer;
+        ComPtr<ID3D11Buffer> m_playerMechVertexBuffer[4]; // 0: Crimson, 1: Cobalt, 2: Amber, 3: Emerald
+        ComPtr<ID3D11Buffer> m_enemyMechVertexBuffer; // Legacy/fallback
         ComPtr<ID3D11Buffer> m_mechIndexBuffer;
         UINT m_mechIndexCount = 0;
 

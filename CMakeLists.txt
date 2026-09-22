@@ -5,8 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Prevent Windows min/max macros from conflicting with std/Jolt
-add_compile_definitions(NOMINMAX)
+# Prevent Windows min/max macros and winsock 1.x conflicts
+add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 
 # SDL3
 include(FetchContent)
@@ -76,6 +76,7 @@ set(SOURCES
     src/combat/TargetLockSystem.cpp
     src/audio/AudioManager.cpp
     src/vr/VRManager.cpp
+    src/network/NetworkManager.cpp
 )
 
 set(HEADERS
@@ -89,6 +90,7 @@ set(HEADERS
     src/combat/TargetLockSystem.hpp
     src/audio/AudioManager.hpp
     src/vr/VRManager.hpp
+    src/network/NetworkManager.hpp
     src/math/MathTypes.hpp
 )
 
@@ -114,6 +116,7 @@ target_link_libraries(OverdriveCore PRIVATE
     d3d11
     dxgi
     d3dcompiler
+    ws2_32
 )
 
 # Copy shaders and assets to output directory

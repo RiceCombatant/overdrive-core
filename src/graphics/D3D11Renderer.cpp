@@ -1,5 +1,6 @@
 #include "D3D11Renderer.hpp"
 #include "combat/TargetLockSystem.hpp"
+#include "network/NetworkManager.hpp"
 #include <d3dcompiler.h>
 #include <dxgi.h>
 #include <dxgi1_2.h>
@@ -427,7 +428,87 @@ namespace Overdrive
         idata.pSysMem = indices.data();
 
         hr = m_device->CreateBuffer(&ibd, &idata, m_mechIndexBuffer.GetAddressOf());
-        return SUCCEEDED(hr);
+        if (FAILED(hr)) return false;
+
+        // Create Mech geometry buffers for 4 player color themes (Slot 0 to 3)
+        struct PlayerColorTheme {
+            XMFLOAT4 primary;
+            XMFLOAT4 frame;
+            XMFLOAT4 armor;
+            XMFLOAT4 thruster;
+        };
+
+        PlayerColorTheme themes[4] = {
+            // Player 1 / Slot 0 (Host - Crimson / Dark Titanium)
+            { { 0.82f, 0.12f, 0.18f, 1.0f }, { 0.16f, 0.17f, 0.20f, 1.0f }, { 0.75f, 0.78f, 0.82f, 1.0f }, { 1.00f, 0.45f, 0.10f, 1.0f } },
+            // Player 2 / Slot 1 (Cobalt / Silver)
+            { { 0.15f, 0.50f, 0.95f, 1.0f }, { 0.12f, 0.14f, 0.20f, 1.0f }, { 0.88f, 0.90f, 0.95f, 1.0f }, { 0.20f, 0.90f, 1.00f, 1.0f } },
+            // Player 3 / Slot 2 (Amber / Charcoal)
+            { { 0.95f, 0.65f, 0.10f, 1.0f }, { 0.16f, 0.16f, 0.18f, 1.0f }, { 0.70f, 0.68f, 0.65f, 1.0f }, { 1.00f, 0.85f, 0.15f, 1.0f } },
+            // Player 4 / Slot 3 (Emerald / Violet)
+            { { 0.15f, 0.85f, 0.45f, 1.0f }, { 0.20f, 0.15f, 0.25f, 1.0f }, { 0.80f, 0.85f, 0.82f, 1.0f }, { 0.30f, 1.00f, 0.60f, 1.0f } }
+        };
+
+        for (int p = 0; p < 4; ++p)
+        {
+            std::vector<Vertex> pVertices;
+            const auto& th = themes[p];
+
+            auto addPBox = [&](float cx, float cy, float cz, float sx, float sy, float sz, XMFLOAT4 col) {
+                float hx = sx * 0.5f, hy = sy * 0.5f, hz = sz * 0.5f;
+
+                pVertices.push_back({ { cx - hx, cy - hy, cz - hz }, { 0.0f, 0.0f, -1.0f }, col });
+                pVertices.push_back({ { cx - hx, cy + hy, cz - hz }, { 0.0f, 0.0f, -1.0f }, col });
+                pVertices.push_back({ { cx + hx, cy + hy, cz - hz }, { 0.0f, 0.0f, -1.0f }, col });
+                pVertices.push_back({ { cx + hx, cy - hy, cz - hz }, { 0.0f, 0.0f, -1.0f }, col });
+
+                pVertices.push_back({ { cx + hx, cy - hy, cz + hz }, { 0.0f, 0.0f, 1.0f }, col });
+                pVertices.push_back({ { cx + hx, cy + hy, cz + hz }, { 0.0f, 0.0f, 1.0f }, col });
+                pVertices.push_back({ { cx - hx, cy + hy, cz + hz }, { 0.0f, 0.0f, 1.0f }, col });
+                pVertices.push_back({ { cx - hx, cy - hy, cz + hz }, { 0.0f, 0.0f, 1.0f }, col });
+            };
+
+            // 1. Torso & Core
+            addPBox(0.0f, 1.6f, 0.0f, 0.9f, 0.8f, 0.7f, th.frame);
+            addPBox(0.0f, 1.65f, 0.2f, 0.75f, 0.65f, 0.5f, th.primary);
+            addPBox(0.0f, 1.85f, 0.15f, 0.45f, 0.35f, 0.4f, th.armor);
+
+            // 2. Left & Right Shoulder Boosters
+            addPBox(-0.75f, 1.85f, -0.1f, 0.35f, 0.9f, 0.6f, th.primary);
+            addPBox( 0.75f, 1.85f, -0.1f, 0.35f, 0.9f, 0.6f, th.primary);
+            addPBox(-0.80f, 2.05f, -0.2f, 0.25f, 0.6f, 0.4f, th.frame);
+            addPBox( 0.80f, 2.05f, -0.2f, 0.25f, 0.6f, 0.4f, th.frame);
+
+            // 3. Arms & Weapons
+            addPBox(-0.85f, 1.3f, 0.2f, 0.3f, 0.7f, 0.35f, th.frame);
+            addPBox( 0.85f, 1.3f, 0.2f, 0.3f, 0.7f, 0.35f, th.frame);
+            addPBox(-0.95f, 1.0f, 0.7f, 0.2f, 0.25f, 1.2f, th.armor);
+            addPBox( 0.95f, 1.0f, 0.7f, 0.2f, 0.25f, 1.2f, th.armor);
+
+            // 4. Reverse-joint Legs
+            addPBox(-0.35f, 0.65f, 0.0f, 0.3f, 1.3f, 0.4f, th.primary);
+            addPBox( 0.35f, 0.65f, 0.0f, 0.3f, 1.3f, 0.4f, th.primary);
+            addPBox(-0.35f, 0.1f, 0.15f, 0.35f, 0.2f, 0.7f, th.frame);
+            addPBox( 0.35f, 0.1f, 0.15f, 0.35f, 0.2f, 0.7f, th.frame);
+
+            // 5. Back Thrusters
+            addPBox(-0.35f, 1.6f, -0.45f, 0.22f, 0.22f, 0.2f, th.thruster);
+            addPBox( 0.35f, 1.6f, -0.45f, 0.22f, 0.22f, 0.2f, th.thruster);
+
+            D3D11_BUFFER_DESC pvbd = {};
+            pvbd.ByteWidth = static_cast<UINT>(sizeof(Vertex) * pVertices.size());
+            pvbd.Usage = D3D11_USAGE_IMMUTABLE;
+            pvbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+            D3D11_SUBRESOURCE_DATA pvdata = {};
+            pvdata.pSysMem = pVertices.data();
+
+            hr = m_device->CreateBuffer(&pvbd, &pvdata, m_playerMechVertexBuffer[p].GetAddressOf());
+            if (FAILED(hr)) return false;
+        }
+
+        m_enemyMechVertexBuffer = m_playerMechVertexBuffer[0];
+        return true;
     }
 
     bool D3D11Renderer::InitHUDGeometry()
@@ -512,9 +593,9 @@ namespace Overdrive
         hr = m_device->CreateBuffer(&enDesc, nullptr, m_dynamicEnBuffer.GetAddressOf());
         if (FAILED(hr)) return false;
 
-        // Dynamic Reticle Buffer (Inner red reticle, distance text, target assist label: 512 vertices)
+        // Dynamic Reticle Buffer (Inner red reticle, distance text, target assist label, 3D target reticles: 2048 vertices)
         D3D11_BUFFER_DESC dynRetDesc = {};
-        dynRetDesc.ByteWidth = sizeof(Vertex) * 512;
+        dynRetDesc.ByteWidth = sizeof(Vertex) * 2048;
         dynRetDesc.Usage = D3D11_USAGE_DYNAMIC;
         dynRetDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
         dynRetDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -633,7 +714,9 @@ namespace Overdrive
         const MechController& mech,
         const WeaponSystem& weapons,
         const std::vector<TargetDummy>& targets,
-        const TargetLockSystem& lockSystem)
+        const TargetLockSystem& lockSystem,
+        const std::vector<RemoteMech>* remoteMechs,
+        const NetworkManager* network)
     {
         float aspect = static_cast<float>(m_width) / static_cast<float>(m_height > 0 ? m_height : 1);
         XMMATRIX view = camera.GetViewMatrix();
@@ -664,15 +747,27 @@ namespace Overdrive
         // 2. Render Target Dummies
         RenderTargetDummies(targets, view, proj);
 
-        // 3. Render Mech
+        // 3. Render Remote Enemy Mechs
+        if (remoteMechs)
+        {
+            for (const auto& rMech : *remoteMechs)
+            {
+                RenderEnemyMech(rMech, view, proj);
+            }
+        }
+
+        // 4. Render 3D Holographic Lock-On Reticles directly on enemy bodies
+        RenderTargetReticles(targets, lockSystem, view, proj, camera.GetEyePosition(), remoteMechs);
+
+        // 5. Render Mech
         bool isFPV = (camera.GetMode() == CameraMode::FPV);
         RenderMech(mech, view, proj, isFPV);
 
-        // 4. Render Projectiles (High-energy glowing laser/bullet tracers)
+        // 6. Render Projectiles (High-energy glowing laser/bullet tracers)
         RenderProjectiles(weapons, view, proj);
 
-        // 5. Render HUD (Reticle, Dynamic Inner Reticle, Distance Readout, EN Bar, Ammo Bars)
-        RenderHUD(mech, weapons, lockSystem, camera.GetMode());
+        // 7. Render HUD (Reticle, Dynamic Inner Reticle, Distance Readout, EN Bar, Ammo Bars, AP Bar, Net Status)
+        RenderHUD(mech, weapons, lockSystem, camera.GetMode(), network);
     }
 
     void D3D11Renderer::RenderTargetDummies(const std::vector<TargetDummy>& targets, const XMMATRIX& view, const XMMATRIX& proj)
@@ -703,6 +798,413 @@ namespace Overdrive
             }
 
             m_context->DrawIndexed(m_dummyIndexCount, 0, 0);
+        }
+    }
+
+    void D3D11Renderer::RenderTargetReticles(
+        const std::vector<TargetDummy>& targets,
+        const TargetLockSystem& lockSystem,
+        const XMMATRIX& view,
+        const XMMATRIX& proj,
+        const XMFLOAT3& eyePos,
+        const std::vector<RemoteMech>* remoteMechs)
+    {
+        m_context->OMSetDepthStencilState(m_hudDepthDisabledState.Get(), 0);
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = XMMatrixIdentity();
+            cb->view = view;
+            cb->projection = proj;
+            cb->customParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f); // Emissive unlit
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
+        m_context->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        m_context->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+        m_context->PSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        m_context->IASetInputLayout(m_inputLayout.Get());
+
+        const auto& lockInfo = lockSystem.GetCurrentTarget();
+        XMVECTOR camPosVec = XMLoadFloat3(&eyePos);
+
+        std::vector<Vertex> retVerts;
+        retVerts.reserve(768);
+
+        XMFLOAT4 lockRed     = { 1.0f, 0.18f, 0.15f, 0.95f }; // AC6 Warning Red
+        XMFLOAT4 lockAmber   = { 1.0f, 0.85f, 0.22f, 0.95f }; // Locking in progress
+        XMFLOAT4 idleCyan    = { 0.35f, 0.75f, 0.95f, 0.65f }; // Unlocked enemy marker
+        XMFLOAT4 distWhite   = { 0.92f, 0.92f, 0.96f, 0.90f };
+        XMFLOAT4 hpGreen     = { 0.25f, 0.95f, 0.35f, 0.95f };
+        XMFLOAT4 hpRed       = { 0.95f, 0.20f, 0.20f, 0.95f };
+        XMFLOAT4 hpBg        = { 0.18f, 0.20f, 0.24f, 0.75f };
+
+        for (int i = 0; i < static_cast<int>(targets.size()); ++i)
+        {
+            const auto& target = targets[i];
+            if (!target.IsAlive()) continue;
+
+            XMFLOAT3 pos = target.GetPosition();
+            XMVECTOR targetPos = XMVectorSet(pos.x, pos.y + 0.3f, pos.z, 0.0f);
+
+            // Vector from target to camera
+            XMVECTOR toCam = camPosVec - targetPos;
+            float dist = XMVectorGetX(XMVector3Length(toCam));
+            if (dist < 0.5f || dist > 450.0f) continue;
+            toCam = XMVector3Normalize(toCam);
+
+            // Billboard coordinate axes (facing camera)
+            XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+            XMVECTOR rightVec = XMVector3Normalize(XMVector3Cross(worldUp, toCam));
+            XMVECTOR upVec = XMVector3Cross(toCam, rightVec);
+
+            bool isCurrentLocked = (lockInfo.hasTarget && !lockInfo.isRemoteMech && lockInfo.targetIndex == i);
+
+            // Dynamic scale: maintain comfortable size at any distance
+            float scale = std::clamp(dist * 0.045f, 1.2f, 6.5f);
+
+            auto addWorldPoint = [&](float r, float u) -> XMFLOAT3 {
+                XMVECTOR p = targetPos + rightVec * r + upVec * u;
+                XMFLOAT3 outP;
+                XMStoreFloat3(&outP, p);
+                return outP;
+            };
+
+            auto addL = [&](float r1, float u1, float r2, float u2, XMFLOAT4 col) {
+                retVerts.push_back({ addWorldPoint(r1, u1), { 0, 0, 1 }, col });
+                retVerts.push_back({ addWorldPoint(r2, u2), { 0, 0, 1 }, col });
+            };
+
+            if (isCurrentLocked)
+            {
+                XMFLOAT4 col = lockInfo.isAimed ? lockRed : lockAmber;
+
+                // 1. Center Crosshair (+)
+                float cLen = scale * 0.15f;
+                addL(-cLen, 0.0f,  cLen, 0.0f, col);
+                addL(0.0f, -cLen, 0.0f,  cLen, col);
+
+                // 2. 4-Corner Brackets: [ + ]
+                float bw = scale * 0.60f;
+                float bh = scale * 0.60f;
+                float blen = scale * 0.20f;
+
+                // Top-Left
+                addL(-bw, bh, -bw + blen, bh, col);
+                addL(-bw, bh, -bw, bh - blen, col);
+
+                // Top-Right
+                addL(bw, bh, bw - blen, bh, col);
+                addL(bw, bh, bw, bh - blen, col);
+
+                // Bottom-Left
+                addL(-bw, -bh, -bw + blen, -bh, col);
+                addL(-bw, -bh, -bw, -bh + blen, col);
+
+                // Bottom-Right
+                addL(bw, -bh, bw - blen, -bh, col);
+                addL(bw, -bh, bw, -bh + blen, col);
+
+                // 3. Aimed Indicator (AC6-style Outer Diamond Frame)
+                if (lockInfo.isAimed)
+                {
+                    float dSize = scale * 0.78f;
+                    addL(0.0f, dSize, dSize, 0.0f, lockRed);
+                    addL(dSize, 0.0f, 0.0f, -dSize, lockRed);
+                    addL(0.0f, -dSize, -dSize, 0.0f, lockRed);
+                    addL(-dSize, 0.0f, 0.0f, dSize, lockRed);
+                }
+
+                // 4. Enemy AP / HP Bar above the target
+                float barY = bh + scale * 0.20f;
+                float barW = scale * 0.65f;
+                float barH = scale * 0.06f;
+                float hpRatio = target.GetHpRatio();
+                XMFLOAT4 hpColor = hpRatio > 0.4f ? hpGreen : hpRed;
+
+                // Background border box
+                addL(-barW, barY,  barW, barY, hpBg);
+                addL( barW, barY,  barW, barY + barH, hpBg);
+                addL( barW, barY + barH, -barW, barY + barH, hpBg);
+                addL(-barW, barY + barH, -barW, barY, hpBg);
+
+                // Filled health line
+                float fillW = -barW + (barW * 2.0f) * std::clamp(hpRatio, 0.0f, 1.0f);
+                if (fillW > -barW + 0.01f)
+                {
+                    addL(-barW, barY + barH * 0.5f, fillW, barY + barH * 0.5f, hpColor);
+                }
+
+                // 5. Distance string below target
+                int dInt = static_cast<int>(std::round(dist));
+                std::string dStr = "[ " + std::to_string(dInt) + "M ]";
+                float charW = scale * 0.07f;
+                float charH = scale * 0.13f;
+                float charSp = scale * 0.03f;
+                float totalW = static_cast<float>(dStr.length()) * (charW + charSp);
+                float startR = -totalW * 0.5f;
+                float textY = -bh - scale * 0.25f;
+
+                float curR = startR;
+                for (char c : dStr)
+                {
+                    if (c != ' ')
+                    {
+                        float l = curR - charW * 0.5f;
+                        float r = curR + charW * 0.5f;
+                        float t = textY + charH * 0.5f;
+                        float m = textY;
+                        float b = textY - charH * 0.5f;
+
+                        switch (c)
+                        {
+                        case '0':
+                            addL(l, t, r, t, distWhite); addL(r, t, r, b, distWhite); addL(r, b, l, b, distWhite); addL(l, b, l, t, distWhite);
+                            break;
+                        case '1':
+                            addL(r, t, r, b, distWhite);
+                            break;
+                        case '2':
+                            addL(l, t, r, t, distWhite); addL(r, t, r, m, distWhite); addL(r, m, l, m, distWhite); addL(l, m, l, b, distWhite); addL(l, b, r, b, distWhite);
+                            break;
+                        case '3':
+                            addL(l, t, r, t, distWhite); addL(r, t, r, b, distWhite); addL(l, b, r, b, distWhite); addL(l, m, r, m, distWhite);
+                            break;
+                        case '4':
+                            addL(l, t, l, m, distWhite); addL(l, m, r, m, distWhite); addL(r, t, r, b, distWhite);
+                            break;
+                        case '5':
+                            addL(r, t, l, t, distWhite); addL(l, t, l, m, distWhite); addL(l, m, r, m, distWhite); addL(r, m, r, b, distWhite); addL(r, b, l, b, distWhite);
+                            break;
+                        case '6':
+                            addL(r, t, l, t, distWhite); addL(l, t, l, b, distWhite); addL(l, b, r, b, distWhite); addL(r, b, r, m, distWhite); addL(r, m, l, m, distWhite);
+                            break;
+                        case '7':
+                            addL(l, t, r, t, distWhite); addL(r, t, r, b, distWhite);
+                            break;
+                        case '8':
+                            addL(l, t, r, t, distWhite); addL(r, t, r, b, distWhite); addL(r, b, l, b, distWhite); addL(l, b, l, t, distWhite); addL(l, m, r, m, distWhite);
+                            break;
+                        case '9':
+                            addL(r, m, l, m, distWhite); addL(l, m, l, t, distWhite); addL(l, t, r, t, distWhite); addL(r, t, r, b, distWhite); addL(r, b, l, b, distWhite);
+                            break;
+                        case 'M':
+                            addL(l, b, l, t, distWhite); addL(l, t, curR, m, distWhite); addL(curR, m, r, t, distWhite); addL(r, t, r, b, distWhite);
+                            break;
+                        case '[':
+                            addL(r, t, l, t, distWhite); addL(l, t, l, b, distWhite); addL(l, b, r, b, distWhite);
+                            break;
+                        case ']':
+                            addL(l, t, r, t, distWhite); addL(r, t, r, b, distWhite); addL(r, b, l, b, distWhite);
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+                    curR += charW + charSp;
+                }
+            }
+            else
+            {
+                // Unlocked visible enemies: subtle diamond target marker
+                float dSize = scale * 0.40f;
+                addL(0.0f, dSize, dSize, 0.0f, idleCyan);
+                addL(dSize, 0.0f, 0.0f, -dSize, idleCyan);
+                addL(0.0f, -dSize, -dSize, 0.0f, idleCyan);
+                addL(-dSize, 0.0f, 0.0f, dSize, idleCyan);
+            }
+        }
+
+        // Draw Holographic Lock-On and AP/HP Bar for Remote Enemy Mechs
+        if (remoteMechs)
+        {
+            for (const auto& rMech : *remoteMechs)
+            {
+                if (!rMech.IsAlive()) continue;
+
+                XMFLOAT3 pos = rMech.GetPosition();
+                XMVECTOR targetPos = XMVectorSet(pos.x, pos.y + 0.8f, pos.z, 0.0f);
+
+                XMVECTOR toCam = camPosVec - targetPos;
+                float dist = XMVectorGetX(XMVector3Length(toCam));
+                if (dist < 0.5f || dist > 500.0f) continue;
+
+                toCam = XMVector3Normalize(toCam);
+                XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+                XMVECTOR rightVec = XMVector3Normalize(XMVector3Cross(worldUp, toCam));
+                XMVECTOR upVec = XMVector3Cross(toCam, rightVec);
+
+                bool isCurrentLocked = (lockInfo.hasTarget && lockInfo.isRemoteMech && lockInfo.remotePlayerId == rMech.GetPlayerId());
+                float scale = std::clamp(dist * 0.045f, 1.2f, 6.5f);
+
+                auto addWorldPointR = [&](float r, float u) -> XMFLOAT3 {
+                    XMVECTOR p = targetPos + rightVec * r + upVec * u;
+                    XMFLOAT3 outP;
+                    XMStoreFloat3(&outP, p);
+                    return outP;
+                };
+
+                auto addLR = [&](float r1, float u1, float r2, float u2, XMFLOAT4 col) {
+                    retVerts.push_back({ addWorldPointR(r1, u1), { 0, 0, 1 }, col });
+                    retVerts.push_back({ addWorldPointR(r2, u2), { 0, 0, 1 }, col });
+                };
+
+                uint8_t pId = rMech.GetPlayerId();
+                std::string playerName = "PLAYER " + std::to_string(pId + 1);
+
+                // Enemy HP Bar
+                float barY = scale * 0.70f;
+                float barW = scale * 0.75f;
+                float barH = scale * 0.07f;
+                float hpRatio = rMech.GetHpRatio();
+                XMFLOAT4 hpColor = hpRatio > 0.4f ? hpGreen : hpRed;
+
+                addLR(-barW, barY,  barW, barY, hpBg);
+                addLR( barW, barY,  barW, barY + barH, hpBg);
+                addLR( barW, barY + barH, -barW, barY + barH, hpBg);
+                addLR(-barW, barY + barH, -barW, barY, hpBg);
+
+                float fillW = -barW + (barW * 2.0f) * std::clamp(hpRatio, 0.0f, 1.0f);
+                if (fillW > -barW + 0.01f)
+                {
+                    addLR(-barW, barY + barH * 0.5f, fillW, barY + barH * 0.5f, hpColor);
+                }
+
+                if (isCurrentLocked)
+                {
+                    XMFLOAT4 col = lockInfo.isAimed ? lockRed : lockAmber;
+
+                    // Center crosshair
+                    float cLen = scale * 0.18f;
+                    addLR(-cLen, 0.0f,  cLen, 0.0f, col);
+                    addLR(0.0f, -cLen, 0.0f,  cLen, col);
+
+                    // 4-Corner Brackets
+                    float bw = scale * 0.65f;
+                    float bh = scale * 0.65f;
+                    float blen = scale * 0.22f;
+
+                    addLR(-bw, bh, -bw + blen, bh, col);
+                    addLR(-bw, bh, -bw, bh - blen, col);
+                    addLR(bw, bh, bw - blen, bh, col);
+                    addLR(bw, bh, bw, bh - blen, col);
+                    addLR(-bw, -bh, -bw + blen, -bh, col);
+                    addLR(-bw, -bh, -bw, -bh + blen, col);
+                    addLR(bw, -bh, bw - blen, -bh, col);
+                    addLR(bw, -bh, bw, -bh + blen, col);
+
+                    // Player Name label above HP bar
+                    float pCharW = scale * 0.05f;
+                    float pCharH = scale * 0.09f;
+                    float pCharSp = scale * 0.02f;
+                    float pTotalW = static_cast<float>(playerName.length()) * (pCharW + pCharSp);
+                    float pStartR = -pTotalW * 0.5f;
+                    float pTextY = barY + barH + scale * 0.08f;
+                    float pCurR = pStartR;
+                    for (char c : playerName)
+                    {
+                        if (c != ' ')
+                        {
+                            float l = pCurR - pCharW * 0.5f, r = pCurR + pCharW * 0.5f;
+                            float t = pTextY + pCharH * 0.5f, m = pTextY, b = pTextY - pCharH * 0.5f;
+                            switch (c)
+                            {
+                            case 'P': addLR(l, b, l, t, col); addLR(l, t, r, t, col); addLR(r, t, r, m, col); addLR(r, m, l, m, col); break;
+                            case 'L': addLR(l, t, l, b, col); addLR(l, b, r, b, col); break;
+                            case 'A': addLR(l, b, l, t, col); addLR(l, t, r, t, col); addLR(r, t, r, b, col); addLR(l, m, r, m, col); break;
+                            case 'Y': addLR(l, t, pCurR, m, col); addLR(r, t, pCurR, m, col); addLR(pCurR, m, pCurR, b, col); break;
+                            case 'E': addLR(r, t, l, t, col); addLR(l, t, l, b, col); addLR(l, b, r, b, col); addLR(l, m, r, m, col); break;
+                            case 'R': addLR(l, b, l, t, col); addLR(l, t, r, t, col); addLR(r, t, r, m, col); addLR(r, m, l, m, col); addLR(pCurR, m, r, b, col); break;
+                            case '1': addLR(r, t, r, b, col); break;
+                            case '2': addLR(l, t, r, t, col); addLR(r, t, r, m, col); addLR(r, m, l, m, col); addLR(l, m, l, b, col); addLR(l, b, r, b, col); break;
+                            case '3': addLR(l, t, r, t, col); addLR(r, t, r, b, col); addLR(l, b, r, b, col); addLR(l, m, r, m, col); break;
+                            case '4': addLR(l, t, l, m, col); addLR(l, m, r, m, col); addLR(r, t, r, b, col); break;
+                            default: break;
+                            }
+                        }
+                        pCurR += pCharW + pCharSp;
+                    }
+
+                    if (lockInfo.isAimed)
+                    {
+                        float dSize = scale * 0.85f;
+                        addLR(0.0f, dSize, dSize, 0.0f, lockRed);
+                        addLR(dSize, 0.0f, 0.0f, -dSize, lockRed);
+                        addLR(0.0f, -dSize, -dSize, 0.0f, lockRed);
+                        addLR(-dSize, 0.0f, 0.0f, dSize, lockRed);
+                    }
+
+                    // Distance display
+                    int dInt = static_cast<int>(std::round(dist));
+                    std::string dStr = "[ " + std::to_string(dInt) + "M ]";
+                    float charW = scale * 0.07f;
+                    float charH = scale * 0.13f;
+                    float charSp = scale * 0.03f;
+                    float totalW = static_cast<float>(dStr.length()) * (charW + charSp);
+                    float curR = -totalW * 0.5f;
+                    float textY = -bh - scale * 0.25f;
+
+                    for (char c : dStr)
+                    {
+                        if (c != ' ')
+                        {
+                            float l = curR - charW * 0.5f;
+                            float r = curR + charW * 0.5f;
+                            float t = textY + charH * 0.5f;
+                            float m = textY;
+                            float b = textY - charH * 0.5f;
+
+                            switch (c)
+                            {
+                            case '0': addLR(l, t, r, t, distWhite); addLR(r, t, r, b, distWhite); addLR(r, b, l, b, distWhite); addLR(l, b, l, t, distWhite); break;
+                            case '1': addLR(r, t, r, b, distWhite); break;
+                            case '2': addLR(l, t, r, t, distWhite); addLR(r, t, r, m, distWhite); addLR(r, m, l, m, distWhite); addLR(l, m, l, b, distWhite); addLR(l, b, r, b, distWhite); break;
+                            case '3': addLR(l, t, r, t, distWhite); addLR(r, t, r, b, distWhite); addLR(l, b, r, b, distWhite); addLR(l, m, r, m, distWhite); break;
+                            case '4': addLR(l, t, l, m, distWhite); addLR(l, m, r, m, distWhite); addLR(r, t, r, b, distWhite); break;
+                            case '5': addLR(r, t, l, t, distWhite); addLR(l, t, l, m, distWhite); addLR(l, m, r, m, distWhite); addLR(r, m, r, b, distWhite); break;
+                            case '6': addLR(r, t, l, t, distWhite); addLR(l, t, l, b, distWhite); addLR(l, b, r, b, distWhite); addLR(r, b, r, m, distWhite); addLR(r, m, l, m, distWhite); break;
+                            case '7': addLR(l, t, r, t, distWhite); addLR(r, t, r, b, distWhite); break;
+                            case '8': addLR(l, t, r, t, distWhite); addLR(r, t, r, b, distWhite); addLR(r, b, l, b, distWhite); addLR(l, b, l, t, distWhite); addLR(l, m, r, m, distWhite); break;
+                            case '9': addLR(r, m, l, m, distWhite); addLR(l, m, l, t, distWhite); addLR(l, t, r, t, distWhite); addLR(r, t, r, b, distWhite); break;
+                            case 'M': addLR(l, b, l, t, distWhite); addLR(l, t, curR, m, distWhite); addLR(curR, m, r, t, distWhite); addLR(r, t, r, b, distWhite); break;
+                            case '[': addLR(r, t, l, t, distWhite); addLR(l, t, l, b, distWhite); addLR(l, b, r, b, distWhite); break;
+                            case ']': addLR(l, t, r, t, distWhite); addLR(r, t, r, b, distWhite); addLR(r, b, l, b, distWhite); break;
+                            default: break;
+                            }
+                        }
+                        curR += charW + charSp;
+                    }
+                }
+                else
+                {
+                    // Unlocked enemy mech marker
+                    float dSize = scale * 0.45f;
+                    addLR(0.0f, dSize, dSize, 0.0f, lockAmber);
+                    addLR(dSize, 0.0f, 0.0f, -dSize, lockAmber);
+                    addLR(0.0f, -dSize, -dSize, 0.0f, lockAmber);
+                    addLR(-dSize, 0.0f, 0.0f, dSize, lockAmber);
+                }
+            }
+        }
+
+        if (!retVerts.empty())
+        {
+            D3D11_MAPPED_SUBRESOURCE dynMap;
+            if (SUCCEEDED(m_context->Map(m_dynamicReticleBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &dynMap)))
+            {
+                UINT copyCount = static_cast<UINT>(std::min(retVerts.size(), size_t(2048)));
+                memcpy(dynMap.pData, retVerts.data(), sizeof(Vertex) * copyCount);
+                m_context->Unmap(m_dynamicReticleBuffer.Get(), 0);
+
+                UINT stride = sizeof(Vertex);
+                UINT offset = 0;
+                m_context->IASetVertexBuffers(0, 1, m_dynamicReticleBuffer.GetAddressOf(), &stride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->Draw(copyCount, 0);
+            }
         }
     }
 
@@ -785,7 +1287,42 @@ namespace Overdrive
         }
     }
 
-    void D3D11Renderer::RenderHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, CameraMode cameraMode)
+    void D3D11Renderer::RenderEnemyMech(const RemoteMech& remoteMech, const XMMATRIX& view, const XMMATRIX& proj)
+    {
+        if (!remoteMech.IsAlive()) return;
+
+        XMFLOAT3 pos = remoteMech.GetPosition();
+        XMFLOAT3 rot = remoteMech.GetRotation(); // Yaw, Pitch, Roll
+
+        float abPitch = remoteMech.IsAssaultBoosting() ? 0.35f : 0.0f;
+        XMMATRIX rotMat = XMMatrixRotationRollPitchYaw(rot.y * 0.3f + abPitch, rot.x, rot.z);
+        XMMATRIX transMat = XMMatrixTranslation(pos.x, pos.y, pos.z);
+        XMMATRIX world = rotMat * transMat;
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = world;
+            cb->view = view;
+            cb->projection = proj;
+            // Hit flashing if hitFlashTimer > 0 (unlit white/emissive)
+            cb->customParams = remoteMech.IsHitFlashing() ? XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f) : XMFLOAT4(1.0f, 0.0f, 0.0f, 0.0f);
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        UINT stride = sizeof(Vertex);
+        UINT offset = 0;
+        uint8_t pId = remoteMech.GetPlayerId() % 4;
+        ID3D11Buffer* vBuf = m_playerMechVertexBuffer[pId].Get() ? m_playerMechVertexBuffer[pId].Get() : m_enemyMechVertexBuffer.Get();
+        m_context->IASetVertexBuffers(0, 1, &vBuf, &stride, &offset);
+        m_context->IASetIndexBuffer(m_mechIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        m_context->DrawIndexed(m_mechIndexCount, 0, 0);
+    }
+
+    void D3D11Renderer::RenderHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, CameraMode cameraMode, const NetworkManager* network)
     {
         m_context->OMSetDepthStencilState(m_hudDepthDisabledState.Get(), 0);
 
@@ -897,6 +1434,21 @@ namespace Overdrive
             AddStringLines(assistStr, textX, textY, charW, charH, spacing, retYellow, dynRetVerts);
         }
 
+        // Network Status Display (Top Center)
+        if (network && network->GetMode() != NetworkRole::None)
+        {
+            std::string netStr = network->GetStatusString();
+            float charH = 0.020f;
+            float charW = charH * invAspect * 0.75f;
+            float spacing = charW * 0.35f;
+            float totalW = netStr.length() * (charW + spacing);
+            float textX = -totalW * 0.5f;
+            float textY = 0.88f;
+
+            XMFLOAT4 netCol = network->IsConnected() ? XMFLOAT4(0.25f, 0.95f, 0.45f, 0.95f) : XMFLOAT4(1.0f, 0.85f, 0.25f, 0.95f);
+            AddStringLines(netStr, textX, textY, charW, charH, spacing, netCol, dynRetVerts);
+        }
+
         if (!dynRetVerts.empty())
         {
             if (SUCCEEDED(m_context->Map(m_dynamicReticleBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
@@ -952,11 +1504,16 @@ namespace Overdrive
         m_context->Draw(12, 0);
 
         // 4. Update and Draw Weapon Ammo Bars (Right Arm & Left Arm in bottom-right)
-        float rAmmoRatio = static_cast<float>(weapons.GetRightAmmo()) / static_cast<float>(weapons.GetMaxAmmo());
-        float lAmmoRatio = static_cast<float>(weapons.GetLeftAmmo()) / static_cast<float>(weapons.GetMaxAmmo());
+        float rAmmoRatio = weapons.GetRightAmmoRatio();
+        float lAmmoRatio = weapons.GetLeftAmmoRatio();
 
-        XMFLOAT4 raColor = { 1.0f, 0.60f, 0.20f, 0.9f }; // Orange
-        XMFLOAT4 laColor = { 0.3f, 0.85f, 1.00f, 0.9f }; // Cyan
+        // Pulsing animation for reloading arms
+        static float s_hudPulseTime = 0.0f;
+        s_hudPulseTime += 0.016f;
+        float pulseAlpha = 0.60f + 0.40f * std::sin(s_hudPulseTime * 14.0f);
+
+        XMFLOAT4 raColor = weapons.IsRightReloading() ? XMFLOAT4(1.0f, 0.85f, 0.15f, pulseAlpha) : XMFLOAT4(1.0f, 0.60f, 0.20f, 0.9f); // Reload Gold or Orange
+        XMFLOAT4 laColor = weapons.IsLeftReloading()  ? XMFLOAT4(1.0f, 0.85f, 0.15f, pulseAlpha) : XMFLOAT4(0.3f, 0.85f, 1.00f, 0.9f); // Reload Gold or Cyan
 
         float aLeft = 0.55f, aRight = 0.85f;
         float raTop = -0.74f, raBot = -0.765f;
@@ -965,7 +1522,14 @@ namespace Overdrive
         float rFill = aLeft + (aRight - aLeft) * rAmmoRatio;
         float lFill = aLeft + (aRight - aLeft) * lAmmoRatio;
 
-        std::vector<Vertex> ammoVerts = {
+        // 5. AP (Armor Points / Health) Bar in bottom-left
+        float apRatio = mech.GetHpRatio();
+        float apLeft = -0.85f, apRight = -0.55f;
+        float apTop = -0.74f, apBot = -0.765f;
+        float apFill = apLeft + (apRight - apLeft) * apRatio;
+        XMFLOAT4 apColor = (apRatio > 0.35f) ? XMFLOAT4(0.25f, 0.95f, 0.40f, 0.95f) : XMFLOAT4(1.0f, 0.25f, 0.20f, 0.95f);
+
+        std::vector<Vertex> barVerts = {
             // RA Fill
             { { aLeft, raBot, 0.0f }, { 0, 0, 1 }, raColor },
             { { aLeft, raTop, 0.0f }, { 0, 0, 1 }, raColor },
@@ -981,17 +1545,25 @@ namespace Overdrive
             { { aLeft, laBot, 0.0f }, { 0, 0, 1 }, laColor },
             { { lFill, laTop, 0.0f }, { 0, 0, 1 }, laColor },
             { { lFill, laBot, 0.0f }, { 0, 0, 1 }, laColor },
+
+            // AP Fill (Own Mech Armor Points)
+            { { apLeft, apBot, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apLeft, apTop, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apFill, apTop, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apLeft, apBot, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apFill, apTop, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apFill, apBot, 0.0f }, { 0, 0, 1 }, apColor },
         };
 
         if (SUCCEEDED(m_context->Map(m_dynamicAmmoBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
         {
-            memcpy(mapped.pData, ammoVerts.data(), sizeof(Vertex) * ammoVerts.size());
+            memcpy(mapped.pData, barVerts.data(), sizeof(Vertex) * barVerts.size());
             m_context->Unmap(m_dynamicAmmoBuffer.Get(), 0);
         }
 
         m_context->IASetVertexBuffers(0, 1, m_dynamicAmmoBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        m_context->Draw(static_cast<UINT>(ammoVerts.size()), 0);
+        m_context->Draw(static_cast<UINT>(barVerts.size()), 0);
     }
 
     void D3D11Renderer::RenderVREye(
@@ -1004,7 +1576,9 @@ namespace Overdrive
         const WeaponSystem& weapons,
         const std::vector<TargetDummy>& targets,
         const TargetLockSystem& lockSystem,
-        bool isLeftEye)
+        bool isLeftEye,
+        const std::vector<RemoteMech>* remoteMechs,
+        const NetworkManager* network)
     {
         if (!rtv || !dsv) return;
 
@@ -1041,14 +1615,27 @@ namespace Overdrive
         // 2. Render Target Dummies
         RenderTargetDummies(targets, view, proj);
 
-        // 3. Render Mech (VR is always first-person cockpit, so isFPV=true draws only arms/weapons)
+        // 3. Render Remote Enemy Mechs
+        if (remoteMechs)
+        {
+            for (const auto& rMech : *remoteMechs)
+            {
+                RenderEnemyMech(rMech, view, proj);
+            }
+        }
+
+        // 4. Render 3D Holographic Lock-On Reticles directly on enemy bodies (Stereo VR compatible)
+        XMFLOAT3 cockpitHeadPos = mech.GetCockpitHeadPosition();
+        RenderTargetReticles(targets, lockSystem, view, proj, cockpitHeadPos, remoteMechs);
+
+        // 5. Render Mech (VR is always first-person cockpit, so isFPV=true draws only arms/weapons)
         RenderMech(mech, view, proj, true);
 
-        // 4. Render Projectiles
+        // 6. Render Projectiles
         RenderProjectiles(weapons, view, proj);
 
-        // 5. Render 3D Holographic Cockpit HUD (Reticle, Lock-on marker, EN & Ammo bars)
-        RenderVRHUD(mech, weapons, lockSystem, view, proj);
+        // 7. Render 3D Holographic Cockpit HUD (Reticle, Lock-on marker, EN, Ammo, AP bars, Network status)
+        RenderVRHUD(mech, weapons, lockSystem, view, proj, network);
     }
 
     void D3D11Renderer::RenderVRHUD(
@@ -1056,7 +1643,8 @@ namespace Overdrive
         const WeaponSystem& weapons,
         const TargetLockSystem& lockSystem,
         const XMMATRIX& view,
-        const XMMATRIX& proj)
+        const XMMATRIX& proj,
+        const NetworkManager* network)
     {
         m_context->OMSetDepthStencilState(m_hudDepthDisabledState.Get(), 0);
 
@@ -1067,18 +1655,21 @@ namespace Overdrive
         // Holographic canopy HUD placed 2.2m ahead of the pilot's head
         float sinY = std::sin(yaw);
         float cosY = std::cos(yaw);
-        float sinP = std::sin(pitch);
-        float cosP = std::cos(pitch);
+        float forwardX = sinY;
+        float forwardZ = cosY;
+        float rightX = cosY;
+        float rightZ = -sinY;
 
-        XMVECTOR forward = XMVectorSet(sinY * cosP, -sinP, cosY * cosP, 0.0f);
-        XMVECTOR headPos = XMLoadFloat3(&cockpitPos);
-        XMVECTOR hudCenter = headPos + forward * 2.2f;
+        float hudDist = 2.2f;
+        XMFLOAT3 hudCenter = {
+            cockpitPos.x + forwardX * hudDist,
+            cockpitPos.y + 0.15f,
+            cockpitPos.z + forwardZ * hudDist
+        };
 
-        // Scale HUD to fit cockpit field of view at 2.2m
-        XMMATRIX scaleMat = XMMatrixScaling(1.4f, 0.9f, 1.0f);
-        XMMATRIX rotMat = XMMatrixRotationRollPitchYaw(-pitch, yaw, 0.0f);
-        XMMATRIX transMat = XMMatrixTranslationFromVector(hudCenter);
-        XMMATRIX hudWorld = scaleMat * rotMat * transMat;
+        XMMATRIX rotMat = XMMatrixRotationRollPitchYaw(pitch * 0.5f, yaw, 0.0f);
+        XMMATRIX transMat = XMMatrixTranslation(hudCenter.x, hudCenter.y, hudCenter.z);
+        XMMATRIX hudWorld = rotMat * transMat;
 
         D3D11_MAPPED_SUBRESOURCE mapped;
         if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
@@ -1100,12 +1691,12 @@ namespace Overdrive
         UINT stride = sizeof(Vertex);
         UINT offset = 0;
 
-        // 1. Draw Static Outer Reticle
+        // 1. Static Canopy Outer Reticle
         m_context->IASetVertexBuffers(0, 1, m_hudVertexBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
         m_context->Draw(m_reticleVertexCount, 0);
 
-        // 2. Draw Dynamic Inner Reticle & Distance Meter
+        // 2. Dynamic Inner Reticle & Distance Meter in VR Cockpit
         const auto& targetInfo = lockSystem.GetCurrentTarget();
         XMFLOAT2 retNdc = lockSystem.GetInnerReticlePos();
         bool isHardLock = lockSystem.IsHardLockEnabled();
@@ -1113,49 +1704,50 @@ namespace Overdrive
         std::vector<Vertex> dynRetVerts;
         dynRetVerts.reserve(384);
 
-        XMFLOAT4 retRed    = { 1.0f, 0.22f, 0.18f, 0.95f };
+        XMFLOAT4 retColor = targetInfo.isAimed ? XMFLOAT4(1.0f, 0.18f, 0.15f, 0.95f) : XMFLOAT4(1.0f, 0.85f, 0.22f, 0.95f);
         XMFLOAT4 retYellow = { 1.0f, 0.88f, 0.25f, 0.95f };
         XMFLOAT4 distWhite = { 0.92f, 0.92f, 0.96f, 0.90f };
 
-        float aspect = static_cast<float>(m_width) / static_cast<float>(m_height > 0 ? m_height : 1);
-        float invAspect = 1.0f / aspect;
+        float invAspect = 1.0f; // In 3D space, coordinate scaling is symmetric
 
         if (targetInfo.hasTarget || isHardLock)
         {
-            float rx = retNdc.x;
-            float ry = retNdc.y;
+            float rx = retNdc.x * 0.35f;
+            float ry = retNdc.y * 0.35f;
 
-            float cw = 0.010f * invAspect;
-            float ch = 0.010f;
-            dynRetVerts.push_back({ { rx - cw, ry, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + cw, ry, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx, ry - ch, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx, ry + ch, 0.0f }, { 0, 0, 1 }, retRed });
+            // Center small crosshair
+            float cw = 0.008f * invAspect;
+            float ch = 0.008f;
+            dynRetVerts.push_back({ { rx - cw, ry, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + cw, ry, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx, ry - ch, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx, ry + ch, 0.0f }, { 0, 0, 1 }, retColor });
 
-            float bw = 0.038f * invAspect;
-            float bh = 0.038f;
-            float blenX = 0.012f * invAspect;
-            float blenY = 0.012f;
+            // 4-corner brackets
+            float bw = 0.030f * invAspect;
+            float bh = 0.030f;
+            float blenX = 0.010f * invAspect;
+            float blenY = 0.010f;
 
-            dynRetVerts.push_back({ { rx - bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx - bw + blenX, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx - bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx - bw, ry + bh - blenY, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw, ry + bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx - bw + blenX, ry + bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx - bw, ry + bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx - bw, ry + bh - blenY, 0.0f }, { 0, 0, 1 }, retColor });
 
-            dynRetVerts.push_back({ { rx + bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + bw - blenX, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + bw, ry + bh - blenY, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw, ry + bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + bw - blenX, ry + bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + bw, ry + bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + bw, ry + bh - blenY, 0.0f }, { 0, 0, 1 }, retColor });
 
-            dynRetVerts.push_back({ { rx - bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx - bw + blenX, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx - bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx - bw, ry - bh + blenY, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw, ry - bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx - bw + blenX, ry - bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx - bw, ry - bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx - bw, ry - bh + blenY, 0.0f }, { 0, 0, 1 }, retColor });
 
-            dynRetVerts.push_back({ { rx + bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + bw - blenX, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
-            dynRetVerts.push_back({ { rx + bw, ry - bh + blenY, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw, ry - bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + bw - blenX, ry - bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + bw, ry - bh, 0.0f }, { 0, 0, 1 }, retColor });
+            dynRetVerts.push_back({ { rx + bw, ry - bh + blenY, 0.0f }, { 0, 0, 1 }, retColor });
 
             if (targetInfo.hasTarget)
             {
@@ -1177,6 +1769,17 @@ namespace Overdrive
             AddStringLines(assistStr, -totalW * 0.5f, 0.22f, tw, th, sp, retYellow, dynRetVerts);
         }
 
+        if (network && network->GetMode() != NetworkRole::None)
+        {
+            std::string netStr = network->GetStatusString();
+            float tw = 0.0055f * invAspect;
+            float th = 0.011f;
+            float sp = 0.0025f * invAspect;
+            float totalW = static_cast<float>(netStr.length()) * (tw + sp);
+            XMFLOAT4 netCol = network->IsConnected() ? XMFLOAT4(0.25f, 0.95f, 0.45f, 0.95f) : XMFLOAT4(1.0f, 0.85f, 0.25f, 0.95f);
+            AddStringLines(netStr, -totalW * 0.5f, 0.26f, tw, th, sp, netCol, dynRetVerts);
+        }
+
         if (!dynRetVerts.empty())
         {
             if (SUCCEEDED(m_context->Map(m_dynamicReticleBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
@@ -1189,7 +1792,7 @@ namespace Overdrive
             m_context->Draw(static_cast<UINT>(dynRetVerts.size()), 0);
         }
 
-        // 3. Draw EN Bar & Ammo Bars in VR Cockpit
+        // 3. Draw EN Bar & Ammo / AP Bars in VR Cockpit
         float enRatio = mech.GetEnergyRatio();
         float barWidth = 0.28f;
         float barHeight = 0.015f;
@@ -1222,10 +1825,9 @@ namespace Overdrive
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         m_context->Draw(static_cast<UINT>(enVerts.size()), 0);
 
-        // Ammo Bars
-        float maxAmmo = static_cast<float>(weapons.GetMaxAmmo() > 0 ? weapons.GetMaxAmmo() : 1);
-        float raRatio = static_cast<float>(weapons.GetRightAmmo()) / maxAmmo;
-        float laRatio = static_cast<float>(weapons.GetLeftAmmo()) / maxAmmo;
+        // Ammo Bars & AP Bar
+        float raRatio = weapons.GetRightAmmoRatio();
+        float laRatio = weapons.GetLeftAmmoRatio();
         float aLeft = -0.35f;
         float aWidth = 0.12f;
         float aHeight = 0.010f;
@@ -1237,10 +1839,20 @@ namespace Overdrive
         float rFill = aLeft + aWidth * raRatio;
         float lFill = aLeft + aWidth * laRatio;
 
-        XMFLOAT4 raColor = { 1.0f, 0.6f, 0.1f, 0.9f };
-        XMFLOAT4 laColor = { 0.1f, 0.9f, 0.8f, 0.9f };
+        XMFLOAT4 raColor = weapons.IsRightReloading() ? XMFLOAT4(1.0f, 0.85f, 0.15f, 0.95f) : XMFLOAT4(1.0f, 0.6f, 0.1f, 0.9f);
+        XMFLOAT4 laColor = weapons.IsLeftReloading()  ? XMFLOAT4(1.0f, 0.85f, 0.15f, 0.95f) : XMFLOAT4(0.1f, 0.9f, 0.8f, 0.9f);
+
+        // AP Bar
+        float apRatio = mech.GetHpRatio();
+        float apLeft = 0.23f;
+        float apWidth = 0.12f;
+        float apTop = -0.36f;
+        float apBot = apTop - aHeight;
+        float apFill = apLeft + apWidth * apRatio;
+        XMFLOAT4 apColor = (apRatio > 0.35f) ? XMFLOAT4(0.25f, 0.95f, 0.40f, 0.95f) : XMFLOAT4(1.0f, 0.25f, 0.20f, 0.95f);
 
         std::vector<Vertex> ammoVerts = {
+            // RA Fill
             { { aLeft, raBot, 0.0f }, { 0, 0, 1 }, raColor },
             { { aLeft, raTop, 0.0f }, { 0, 0, 1 }, raColor },
             { { rFill, raTop, 0.0f }, { 0, 0, 1 }, raColor },
@@ -1248,12 +1860,21 @@ namespace Overdrive
             { { rFill, raTop, 0.0f }, { 0, 0, 1 }, raColor },
             { { rFill, raBot, 0.0f }, { 0, 0, 1 }, raColor },
 
+            // LA Fill
             { { aLeft, laBot, 0.0f }, { 0, 0, 1 }, laColor },
             { { aLeft, laTop, 0.0f }, { 0, 0, 1 }, laColor },
             { { lFill, laTop, 0.0f }, { 0, 0, 1 }, laColor },
             { { aLeft, laBot, 0.0f }, { 0, 0, 1 }, laColor },
             { { lFill, laTop, 0.0f }, { 0, 0, 1 }, laColor },
             { { lFill, laBot, 0.0f }, { 0, 0, 1 }, laColor },
+
+            // AP Fill (Own Mech Armor Points)
+            { { apLeft, apBot, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apLeft, apTop, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apFill, apTop, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apLeft, apBot, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apFill, apTop, 0.0f }, { 0, 0, 1 }, apColor },
+            { { apFill, apBot, 0.0f }, { 0, 0, 1 }, apColor },
         };
 
         if (SUCCEEDED(m_context->Map(m_dynamicAmmoBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))

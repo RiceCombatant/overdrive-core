@@ -35,6 +35,7 @@ namespace Overdrive
         void PlayQuickBoost(const XMFLOAT3& mechPos);
         void PlayExplosion(const XMFLOAT3& hitPos, float volume = 1.0f);
         void PlayLockOn(); // 2D Cockpit UI alert sound
+        void PlayReload(const XMFLOAT3& pos); // Weapon reload complete sound
 
         // Continuous Thruster Loop
         void UpdateBoostSound(bool isBoosting, float speedRatio, const XMFLOAT3& mechPos);
@@ -52,12 +53,14 @@ namespace Overdrive
         std::vector<std::unique_ptr<ma_sound>> m_qbSounds;
         std::vector<std::unique_ptr<ma_sound>> m_explosionSounds;
         std::vector<std::unique_ptr<ma_sound>> m_lockOnSounds;
+        std::vector<std::unique_ptr<ma_sound>> m_reloadSounds;
 
         int m_shootRightIdx = 0;
         int m_shootLeftIdx  = 0;
         int m_qbIdx         = 0;
         int m_explosionIdx  = 0;
         int m_lockOnIdx     = 0;
+        int m_reloadIdx     = 0;
 
         // Looping thruster sound
         std::unique_ptr<ma_sound> m_boostLoopSound;

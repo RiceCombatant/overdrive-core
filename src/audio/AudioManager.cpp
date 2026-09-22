@@ -107,6 +107,7 @@ namespace Overdrive
         loadSoundPool("assets/audio/quick_boost.wav", m_qbSounds,         true);
         loadSoundPool("assets/audio/explosion.wav",   m_explosionSounds,  true);
         loadSoundPool("assets/audio/lock_on.wav",     m_lockOnSounds,     false); // 2D cockpit sound
+        loadSoundPool("assets/audio/reload.wav",      m_reloadSounds,      true);
 
         // 4. Load looping thruster sound
         m_boostLoopSound = std::make_unique<ma_sound>();
@@ -154,6 +155,7 @@ namespace Overdrive
         cleanupPool(m_qbSounds);
         cleanupPool(m_explosionSounds);
         cleanupPool(m_lockOnSounds);
+        cleanupPool(m_reloadSounds);
 
         if (m_engine)
         {
@@ -231,6 +233,18 @@ namespace Overdrive
         ma_sound_start(sound.get());
     }
 
+    void AudioManager::PlayReload(const XMFLOAT3& pos)
+    {
+        if (!m_initialized || m_reloadSounds.empty()) return;
+        auto& sound = m_reloadSounds[m_reloadIdx];
+        m_reloadIdx = (m_reloadIdx + 1) % c_poolSize;
+
+        ma_sound_set_position(sound.get(), pos.x, pos.y, pos.z);
+        ma_sound_set_volume(sound.get(), 0.65f);
+        ma_sound_seek_to_pcm_frame(sound.get(), 0);
+        ma_sound_start(sound.get());
+    }
+
     void AudioManager::UpdateBoostSound(bool isBoosting, float speedRatio, const XMFLOAT3& mechPos)
     {
         if (!m_initialized || !m_boostLoopSound) return;
@@ -256,8 +270,9 @@ namespace Overdrive
         bool explo  = std::filesystem::exists("assets/audio/explosion.wav");
         bool lock   = std::filesystem::exists("assets/audio/lock_on.wav");
         bool bLoop  = std::filesystem::exists("assets/audio/boost_loop.wav");
+        bool reload = std::filesystem::exists("assets/audio/reload.wav");
 
-        if (!shootR || !shootL || !qb || !explo || !lock || !bLoop)
+        if (!shootR || !shootL || !qb || !explo || !lock || !bLoop || !reload)
         {
             std::cout << "[AUDIO] Generating procedural sci-fi audio effects..." << std::endl;
             GenerateProceduralWavFiles();
@@ -425,6 +440,50 @@ namespace Overdrive
                 samples[i] = static_cast<int16_t>(std::clamp(sample, -1.0f, 1.0f) * 32767.0f * 0.25f);
             }
             SaveWavFile("assets/audio/boost_loop.wav", samples, sampleRate);
+        }
+
+        // 7. Reload Complete: Mechanical latch click + Dual-tone sci-fi charge chime
+        {
+            float duration = 0.22f;
+            int totalSamples = static_cast<int>(sampleRate * duration);
+            std::vector<int16_t> samples(totalSamples, 0);
+            float pClick = 0.0f;
+            float pChime1 = 0.0f;
+            float pChime2 = 0.0f;
+
+            for (int i = 0; i < totalSamples; ++i)
+            {
+                float t = static_cast<float>(i) / sampleRate;
+                float sample = 0.0f;
+
+                // 0.00s - 0.05s: Mechanical click/latch (metallic frequency drop + noise)
+                if (t < 0.05f)
+                {
+                    float clickFreq = 750.0f * std::exp(-50.0f * t) + 120.0f;
+                    pClick += XM_2PI * clickFreq / sampleRate;
+                    float clickEnv = std::exp(-45.0f * t);
+                    sample += (std::sin(pClick) * 0.6f + noiseDist(rng) * 0.4f) * clickEnv * 0.7f;
+                }
+
+                // 0.05s - 0.12s: First chime tone (1760Hz, A6)
+                if (t >= 0.05f && t < 0.12f)
+                {
+                    float tRel = t - 0.05f;
+                    pChime1 += XM_2PI * 1760.0f / sampleRate;
+                    sample += std::sin(pChime1) * std::exp(-22.0f * tRel) * 0.45f;
+                }
+
+                // 0.11s - 0.22s: Second higher chime tone (2637Hz, E7) - confirming load
+                if (t >= 0.11f)
+                {
+                    float tRel = t - 0.11f;
+                    pChime2 += XM_2PI * 2637.0f / sampleRate;
+                    sample += std::sin(pChime2) * std::exp(-20.0f * tRel) * 0.55f;
+                }
+
+                samples[i] = static_cast<int16_t>(std::clamp(sample, -1.0f, 1.0f) * 32767.0f * 0.75f);
+            }
+            SaveWavFile("assets/audio/reload.wav", samples, sampleRate);
         }
     }
 }

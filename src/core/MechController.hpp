@@ -75,8 +75,18 @@ namespace Overdrive
         float GetEnergyRatio() const { return m_energy / m_maxEnergy; }
 
         bool IsBoostMode() const { return m_boostOn; }
+        bool IsQuickBoost() const { return m_qbTimer > 0.0f; }
         bool IsAssaultBoost() const { return m_isAssaultBoost; }
         bool IsGrounded() const { return m_isGrounded; }
+
+        float GetHp() const { return m_currentHp; }
+        float GetMaxHp() const { return m_maxHp; }
+        float GetHpRatio() const { return m_currentHp / m_maxHp; }
+        bool IsDestroyed() const { return m_isDestroyed; }
+        bool IsHitFlashing() const { return m_hitFlashTimer > 0.0f; }
+        float GetRespawnTimer() const { return m_respawnTimer; }
+        void TakeDamage(float damage);
+        void Respawn(const XMFLOAT3& spawnPos = { 0.0f, 0.5f, 0.0f }, float spawnYaw = 0.0f);
 
         // Camera & Weapon sockets
         XMFLOAT3 GetCockpitHeadPosition() const;
@@ -106,6 +116,13 @@ namespace Overdrive
         float m_energy           = 1000.0f;
         const float m_maxEnergy  = 1000.0f;
         float m_enCooldownTimer  = 0.0f;
+
+        // Health / AP (Armor Points)
+        float m_currentHp        = 2500.0f;
+        const float m_maxHp      = 2500.0f;
+        bool m_isDestroyed       = false;
+        float m_hitFlashTimer    = 0.0f;
+        float m_respawnTimer     = 0.0f;
 
         // Constants
         const float c_normalSpeed = 12.0f;
