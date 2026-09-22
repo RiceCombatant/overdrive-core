@@ -1,0 +1,16 @@
+# Build artifacts and dependencies
+build/
+bin/
+lib/
+out/
+
+# Visual Studio / CMake temporary files
+.vs/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# Temporary logs and crash dumps
+*.log
+*.tmp
+*.dmp
