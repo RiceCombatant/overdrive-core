@@ -58,12 +58,13 @@ namespace Overdrive
     {
         if (deltaTime <= 0.0f) return;
 
-        // AC6 Mechanic: Rapid mouse movement disengages Target Assist to prevent fighting the player
-        if (m_isHardLockEnabled && mouseDeltaLen > 0.22f)
+        // AC6 Mechanic: Intentional large flick/swipe of mouse disengages Target Assist
+        // Raised threshold to 0.45f so normal movement/aiming doesn't accidentally cancel Hard-Lock
+        if (m_isHardLockEnabled && mouseDeltaLen > 0.45f)
         {
             m_isHardLockEnabled = false;
             m_lockedTargetIndex = -1;
-            std::cout << "[TARGET ASSIST] Disengaged due to rapid manual input" << std::endl;
+            std::cout << "[TARGET ASSIST] Disengaged due to manual camera flick" << std::endl;
         }
 
         // 1. Calculate View-Projection Matrix
@@ -113,12 +114,15 @@ namespace Overdrive
             float dz = pos.z - mechPos.z;
             float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-            // FCS effective detection radius (0.80 NDC units from center)
-            if (screenDist < 0.80f && worldDist < 450.0f)
+            // FCS effective detection radius:
+            // For already-locked targets in Hard-Lock mode, allow a generous boundary (1.40)
+            // so aggressive QB dashes or vertical ascents won't lose lock!
+            float maxScreenDist = (m_isHardLockEnabled && m_lockedTargetIndex == i) ? 1.40f : 0.85f;
+            if (screenDist < maxScreenDist && worldDist < 450.0f)
             {
                 // If Hard Lock is enabled and this was already our locked target, strongly prioritize it
-                float bonus = (m_isHardLockEnabled && m_lockedTargetIndex == i) ? -500.0f : 0.0f;
-                float score = screenDist * 150.0f + worldDist + bonus;
+                float bonus = (m_isHardLockEnabled && m_lockedTargetIndex == i) ? -800.0f : 0.0f;
+                float score = screenDist * 120.0f + worldDist + bonus;
 
                 if (score < bestScore)
                 {

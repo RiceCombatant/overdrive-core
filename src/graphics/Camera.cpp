@@ -58,26 +58,38 @@ namespace Overdrive
         else
         {
             // Third Person Chase View (AC6 style)
-            XMFLOAT3 target = mech.GetTPSLookTarget();
-            m_lookTarget = target;
+            XMFLOAT3 mechPos = mech.GetPosition();
+            XMFLOAT3 mechPivot = { mechPos.x, mechPos.y + 1.8f, mechPos.z };
 
-            // Camera placed further back to have a wide, comfortable view
-            const float distance = 8.8f;       // Back distance (increased from 6.8)
-            const float heightOffset = 2.8f;   // Height offset above ground
+            // Camera placed behind the mech along the view direction
+            const float distance = 8.5f;       // Back distance
+            const float heightOffset = 1.5f;   // Up offset above mech center
 
-            // Ideal camera position behind the mech based on Yaw & Pitch
+            // Ideal camera position strictly oriented with view direction (Yaw & Pitch)
             XMFLOAT3 idealPos = {
-                target.x - sinY * distance * cosP,
-                target.y + heightOffset - forward.y * (distance * 0.4f),
-                target.z - cosY * distance * cosP
+                mechPivot.x - forward.x * distance,
+                mechPivot.y + heightOffset - forward.y * (distance * 0.5f),
+                mechPivot.z - forward.z * distance
             };
 
-            // Smooth chase interpolation:
-            // Moderate smoothing (6.0) prevents violent screen shakes during Quick Boost
-            float smoothSpeed = mech.IsAssaultBoost() ? 10.0f : 6.0f;
-            m_eyePos.x += (idealPos.x - m_eyePos.x) * smoothSpeed * deltaTime;
-            m_eyePos.y += (idealPos.y - m_eyePos.y) * smoothSpeed * deltaTime;
-            m_eyePos.z += (idealPos.z - m_eyePos.z) * smoothSpeed * deltaTime;
+            // Horizontal smoothing (prevents violent screen shake on horizontal Quick Boost)
+            float smoothSpeedH = mech.IsAssaultBoost() ? 12.0f : 8.5f;
+            m_eyePos.x += (idealPos.x - m_eyePos.x) * smoothSpeedH * deltaTime;
+            m_eyePos.z += (idealPos.z - m_eyePos.z) * smoothSpeedH * deltaTime;
+
+            // Vertical smoothing: High response speed (16.0) prevents camera lagging behind during jump/landing
+            // This eliminates the camera unintentionally tilting upwards when jumping or downwards when landing!
+            float smoothSpeedV = 16.0f;
+            m_eyePos.y += (idealPos.y - m_eyePos.y) * smoothSpeedV * deltaTime;
+
+            // CRITICAL: Look Target is 50m ahead along the camera's forward direction!
+            // Looking ahead instead of looking at the mech body guarantees the camera view
+            // strictly follows the player's aim angle (Yaw & Pitch) without tilting or drifting on movement.
+            m_lookTarget = {
+                m_eyePos.x + forward.x * 50.0f,
+                m_eyePos.y + forward.y * 50.0f,
+                m_eyePos.z + forward.z * 50.0f
+            };
 
             // Up vector strictly world Y (prevents any camera roll shaking on side boosts)
             m_upVector = { 0.0f, 1.0f, 0.0f };
