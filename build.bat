@@ -6,17 +6,26 @@ set "PATH=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 
 if "%1"=="clean" (
     echo Cleaning build directory...
-    rmdir /s /q build
+    if exist build rmdir /s /q build
+    if exist build_release rmdir /s /q build_release
 )
 
-if not exist build (
-    echo Configuring project with Ninja...
-    cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+set "BUILD_DIR=build"
+set "BUILD_TYPE=Debug"
+
+if "%1"=="release" (
+    set "BUILD_DIR=build_release"
+    set "BUILD_TYPE=Release"
+)
+
+if not exist %BUILD_DIR% (
+    echo Configuring project with Ninja - %BUILD_TYPE%...
+    cmake -G Ninja -B %BUILD_DIR% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl
     if errorlevel 1 exit /b 1
 )
 
-echo Building OverdriveCore...
-cmake --build build
+echo Building OverdriveCore - %BUILD_TYPE%...
+cmake --build %BUILD_DIR%
 if errorlevel 1 exit /b 1
 
 echo Build finished successfully!
