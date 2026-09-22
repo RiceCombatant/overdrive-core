@@ -78,6 +78,7 @@ namespace Overdrive
         void RenderProjectiles(const WeaponSystem& weapons, const XMMATRIX& view, const XMMATRIX& proj);
         void RenderTargetDummies(const std::vector<TargetDummy>& targets, const XMMATRIX& view, const XMMATRIX& proj);
         void RenderHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, CameraMode cameraMode);
+        void RenderVRHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, const XMMATRIX& view, const XMMATRIX& proj);
 
     private:
         HWND m_hwnd = nullptr;

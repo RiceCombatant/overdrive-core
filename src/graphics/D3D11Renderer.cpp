@@ -1046,6 +1046,224 @@ namespace Overdrive
 
         // 4. Render Projectiles
         RenderProjectiles(weapons, view, proj);
+
+        // 5. Render 3D Holographic Cockpit HUD (Reticle, Lock-on marker, EN & Ammo bars)
+        RenderVRHUD(mech, weapons, lockSystem, view, proj);
+    }
+
+    void D3D11Renderer::RenderVRHUD(
+        const MechController& mech,
+        const WeaponSystem& weapons,
+        const TargetLockSystem& lockSystem,
+        const XMMATRIX& view,
+        const XMMATRIX& proj)
+    {
+        m_context->OMSetDepthStencilState(m_hudDepthDisabledState.Get(), 0);
+
+        XMFLOAT3 cockpitPos = mech.GetCockpitHeadPosition();
+        float yaw = mech.GetYaw();
+        float pitch = mech.GetPitch();
+
+        // Holographic canopy HUD placed 2.2m ahead of the pilot's head
+        float sinY = std::sin(yaw);
+        float cosY = std::cos(yaw);
+        float sinP = std::sin(pitch);
+        float cosP = std::cos(pitch);
+
+        XMVECTOR forward = XMVectorSet(sinY * cosP, -sinP, cosY * cosP, 0.0f);
+        XMVECTOR headPos = XMLoadFloat3(&cockpitPos);
+        XMVECTOR hudCenter = headPos + forward * 2.2f;
+
+        // Scale HUD to fit cockpit field of view at 2.2m
+        XMMATRIX scaleMat = XMMatrixScaling(1.4f, 0.9f, 1.0f);
+        XMMATRIX rotMat = XMMatrixRotationRollPitchYaw(-pitch, yaw, 0.0f);
+        XMMATRIX transMat = XMMatrixTranslationFromVector(hudCenter);
+        XMMATRIX hudWorld = scaleMat * rotMat * transMat;
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = hudWorld;
+            cb->view = view;
+            cb->projection = proj;
+            cb->customParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f); // Emissive unlit
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
+        m_context->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        m_context->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+        m_context->PSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        m_context->IASetInputLayout(m_inputLayout.Get());
+
+        UINT stride = sizeof(Vertex);
+        UINT offset = 0;
+
+        // 1. Draw Static Outer Reticle
+        m_context->IASetVertexBuffers(0, 1, m_hudVertexBuffer.GetAddressOf(), &stride, &offset);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+        m_context->Draw(m_reticleVertexCount, 0);
+
+        // 2. Draw Dynamic Inner Reticle & Distance Meter
+        const auto& targetInfo = lockSystem.GetCurrentTarget();
+        XMFLOAT2 retNdc = lockSystem.GetInnerReticlePos();
+        bool isHardLock = lockSystem.IsHardLockEnabled();
+
+        std::vector<Vertex> dynRetVerts;
+        dynRetVerts.reserve(384);
+
+        XMFLOAT4 retRed    = { 1.0f, 0.22f, 0.18f, 0.95f };
+        XMFLOAT4 retYellow = { 1.0f, 0.88f, 0.25f, 0.95f };
+        XMFLOAT4 distWhite = { 0.92f, 0.92f, 0.96f, 0.90f };
+
+        float aspect = static_cast<float>(m_width) / static_cast<float>(m_height > 0 ? m_height : 1);
+        float invAspect = 1.0f / aspect;
+
+        if (targetInfo.hasTarget || isHardLock)
+        {
+            float rx = retNdc.x;
+            float ry = retNdc.y;
+
+            float cw = 0.010f * invAspect;
+            float ch = 0.010f;
+            dynRetVerts.push_back({ { rx - cw, ry, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + cw, ry, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx, ry - ch, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx, ry + ch, 0.0f }, { 0, 0, 1 }, retRed });
+
+            float bw = 0.038f * invAspect;
+            float bh = 0.038f;
+            float blenX = 0.012f * invAspect;
+            float blenY = 0.012f;
+
+            dynRetVerts.push_back({ { rx - bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw + blenX, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw, ry + bh - blenY, 0.0f }, { 0, 0, 1 }, retRed });
+
+            dynRetVerts.push_back({ { rx + bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw - blenX, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw, ry + bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw, ry + bh - blenY, 0.0f }, { 0, 0, 1 }, retRed });
+
+            dynRetVerts.push_back({ { rx - bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw + blenX, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx - bw, ry - bh + blenY, 0.0f }, { 0, 0, 1 }, retRed });
+
+            dynRetVerts.push_back({ { rx + bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw - blenX, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw, ry - bh, 0.0f }, { 0, 0, 1 }, retRed });
+            dynRetVerts.push_back({ { rx + bw, ry - bh + blenY, 0.0f }, { 0, 0, 1 }, retRed });
+
+            if (targetInfo.hasTarget)
+            {
+                int distInt = static_cast<int>(std::round(targetInfo.distance));
+                std::string distStr = "[ " + std::to_string(distInt) + "M ]";
+                float textStartX = rx - 0.038f * invAspect;
+                float textStartY = ry - bh - 0.022f;
+                AddStringLines(distStr, textStartX, textStartY, 0.007f * invAspect, 0.013f, 0.003f * invAspect, distWhite, dynRetVerts);
+            }
+        }
+
+        if (isHardLock)
+        {
+            std::string assistStr = "TARGET ASSIST";
+            float tw = 0.006f * invAspect;
+            float th = 0.012f;
+            float sp = 0.003f * invAspect;
+            float totalW = static_cast<float>(assistStr.length()) * (tw + sp);
+            AddStringLines(assistStr, -totalW * 0.5f, 0.22f, tw, th, sp, retYellow, dynRetVerts);
+        }
+
+        if (!dynRetVerts.empty())
+        {
+            if (SUCCEEDED(m_context->Map(m_dynamicReticleBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+            {
+                memcpy(mapped.pData, dynRetVerts.data(), sizeof(Vertex) * dynRetVerts.size());
+                m_context->Unmap(m_dynamicReticleBuffer.Get(), 0);
+            }
+            m_context->IASetVertexBuffers(0, 1, m_dynamicReticleBuffer.GetAddressOf(), &stride, &offset);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->Draw(static_cast<UINT>(dynRetVerts.size()), 0);
+        }
+
+        // 3. Draw EN Bar & Ammo Bars in VR Cockpit
+        float enRatio = mech.GetEnergyRatio();
+        float barWidth = 0.28f;
+        float barHeight = 0.015f;
+        float barX = 0.0f;
+        float barY = -0.32f;
+
+        float left = barX - barWidth * 0.5f;
+        float top = barY + barHeight * 0.5f;
+        float bottom = barY - barHeight * 0.5f;
+        float currentRight = left + barWidth * enRatio;
+
+        XMFLOAT4 enColor = { 0.1f, 0.8f, 1.0f, 0.9f };
+        if (enRatio < 0.25f) enColor = { 1.0f, 0.2f, 0.1f, 0.9f };
+
+        std::vector<Vertex> enVerts = {
+            { { left, bottom, 0.0f }, { 0, 0, 1 }, enColor },
+            { { left, top, 0.0f }, { 0, 0, 1 }, enColor },
+            { { currentRight, top, 0.0f }, { 0, 0, 1 }, enColor },
+            { { left, bottom, 0.0f }, { 0, 0, 1 }, enColor },
+            { { currentRight, top, 0.0f }, { 0, 0, 1 }, enColor },
+            { { currentRight, bottom, 0.0f }, { 0, 0, 1 }, enColor },
+        };
+
+        if (SUCCEEDED(m_context->Map(m_dynamicEnBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            memcpy(mapped.pData, enVerts.data(), sizeof(Vertex) * enVerts.size());
+            m_context->Unmap(m_dynamicEnBuffer.Get(), 0);
+        }
+        m_context->IASetVertexBuffers(0, 1, m_dynamicEnBuffer.GetAddressOf(), &stride, &offset);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_context->Draw(static_cast<UINT>(enVerts.size()), 0);
+
+        // Ammo Bars
+        float maxAmmo = static_cast<float>(weapons.GetMaxAmmo() > 0 ? weapons.GetMaxAmmo() : 1);
+        float raRatio = static_cast<float>(weapons.GetRightAmmo()) / maxAmmo;
+        float laRatio = static_cast<float>(weapons.GetLeftAmmo()) / maxAmmo;
+        float aLeft = -0.35f;
+        float aWidth = 0.12f;
+        float aHeight = 0.010f;
+        float raTop = -0.36f;
+        float raBot = raTop - aHeight;
+        float laTop = -0.39f;
+        float laBot = laTop - aHeight;
+
+        float rFill = aLeft + aWidth * raRatio;
+        float lFill = aLeft + aWidth * laRatio;
+
+        XMFLOAT4 raColor = { 1.0f, 0.6f, 0.1f, 0.9f };
+        XMFLOAT4 laColor = { 0.1f, 0.9f, 0.8f, 0.9f };
+
+        std::vector<Vertex> ammoVerts = {
+            { { aLeft, raBot, 0.0f }, { 0, 0, 1 }, raColor },
+            { { aLeft, raTop, 0.0f }, { 0, 0, 1 }, raColor },
+            { { rFill, raTop, 0.0f }, { 0, 0, 1 }, raColor },
+            { { aLeft, raBot, 0.0f }, { 0, 0, 1 }, raColor },
+            { { rFill, raTop, 0.0f }, { 0, 0, 1 }, raColor },
+            { { rFill, raBot, 0.0f }, { 0, 0, 1 }, raColor },
+
+            { { aLeft, laBot, 0.0f }, { 0, 0, 1 }, laColor },
+            { { aLeft, laTop, 0.0f }, { 0, 0, 1 }, laColor },
+            { { lFill, laTop, 0.0f }, { 0, 0, 1 }, laColor },
+            { { aLeft, laBot, 0.0f }, { 0, 0, 1 }, laColor },
+            { { lFill, laTop, 0.0f }, { 0, 0, 1 }, laColor },
+            { { lFill, laBot, 0.0f }, { 0, 0, 1 }, laColor },
+        };
+
+        if (SUCCEEDED(m_context->Map(m_dynamicAmmoBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            memcpy(mapped.pData, ammoVerts.data(), sizeof(Vertex) * ammoVerts.size());
+            m_context->Unmap(m_dynamicAmmoBuffer.Get(), 0);
+        }
+        m_context->IASetVertexBuffers(0, 1, m_dynamicAmmoBuffer.GetAddressOf(), &stride, &offset);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_context->Draw(static_cast<UINT>(ammoVerts.size()), 0);
     }
 
     void D3D11Renderer::EndFrame(bool vsync)
