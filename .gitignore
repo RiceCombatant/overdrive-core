@@ -3,6 +3,7 @@ build/
 bin/
 lib/
 out/
+dist/
 
 # Visual Studio / CMake temporary files
 .vs/
