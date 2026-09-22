@@ -66,6 +66,9 @@ namespace Overdrive
         float GetRoll() const { return m_roll; }
         float GetCurrentSpeed() const;
 
+        // Smoothly rotate yaw/pitch towards a target position for AC6 Hard-Lock / Target Assist
+        void TrackTarget(const XMFLOAT3& targetPos, float deltaTime, float speed = 12.0f);
+
         float GetEnergy() const { return m_energy; }
         float GetMaxEnergy() const { return m_maxEnergy; }
         float GetEnergyRatio() const { return m_energy / m_maxEnergy; }
@@ -74,9 +77,11 @@ namespace Overdrive
         bool IsAssaultBoost() const { return m_isAssaultBoost; }
         bool IsGrounded() const { return m_isGrounded; }
 
-        // Camera sockets
+        // Camera & Weapon sockets
         XMFLOAT3 GetCockpitHeadPosition() const;
         XMFLOAT3 GetTPSLookTarget() const;
+        XMFLOAT3 GetLeftMuzzlePosition() const;
+        XMFLOAT3 GetRightMuzzlePosition() const;
 
     private:
         // Transform

@@ -50,6 +50,9 @@ set(SOURCES
     src/graphics/GridFloor.cpp
     src/core/MechController.cpp
     src/physics/PhysicsManager.cpp
+    src/combat/WeaponSystem.cpp
+    src/combat/TargetDummy.cpp
+    src/combat/TargetLockSystem.cpp
 )
 
 set(HEADERS
@@ -58,6 +61,9 @@ set(HEADERS
     src/graphics/GridFloor.hpp
     src/core/MechController.hpp
     src/physics/PhysicsManager.hpp
+    src/combat/WeaponSystem.hpp
+    src/combat/TargetDummy.hpp
+    src/combat/TargetLockSystem.hpp
     src/math/MathTypes.hpp
 )
 

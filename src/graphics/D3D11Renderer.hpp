@@ -13,11 +13,17 @@
 #include "graphics/Camera.hpp"
 #include "graphics/GridFloor.hpp"
 #include "core/MechController.hpp"
+#include "combat/WeaponSystem.hpp"
+#include "combat/TargetDummy.hpp"
 
 using Microsoft::WRL::ComPtr;
 
 namespace Overdrive
 {
+    class GridFloor;
+    class TargetDummy;
+    class TargetLockSystem;
+
     class D3D11Renderer
     {
     public:
@@ -29,7 +35,13 @@ namespace Overdrive
         void BeginFrame();
         void EndFrame();
 
-        void RenderScene(const Camera& camera, const MechController& mech);
+        void RenderScene(
+            const Camera& camera,
+            const MechController& mech,
+            const WeaponSystem& weapons,
+            const std::vector<TargetDummy>& targets,
+            const TargetLockSystem& lockSystem
+        );
 
         int GetWidth() const { return m_width; }
         int GetHeight() const { return m_height; }
@@ -41,11 +53,14 @@ namespace Overdrive
         bool InitShadersAndInputLayout();
         bool InitMechGeometry();
         bool InitHUDGeometry();
+        bool InitCombatGeometry();
 
         void CleanupRenderTarget();
 
         void RenderMech(const MechController& mech, const XMMATRIX& view, const XMMATRIX& proj, bool isFPV);
-        void RenderHUD(const MechController& mech, CameraMode cameraMode);
+        void RenderProjectiles(const WeaponSystem& weapons, const XMMATRIX& view, const XMMATRIX& proj);
+        void RenderTargetDummies(const std::vector<TargetDummy>& targets, const XMMATRIX& view, const XMMATRIX& proj);
+        void RenderHUD(const MechController& mech, const WeaponSystem& weapons, const TargetLockSystem& lockSystem, CameraMode cameraMode);
 
     private:
         HWND m_hwnd = nullptr;
@@ -80,5 +95,13 @@ namespace Overdrive
         ComPtr<ID3D11Buffer> m_hudVertexBuffer;
         UINT m_reticleVertexCount = 0;
         ComPtr<ID3D11Buffer> m_dynamicEnBuffer;
+        ComPtr<ID3D11Buffer> m_dynamicAmmoBuffer;
+        ComPtr<ID3D11Buffer> m_dynamicReticleBuffer; // Dynamic inner reticle & distance display
+
+        // Combat geometry
+        ComPtr<ID3D11Buffer> m_dynamicProjectileBuffer;
+        ComPtr<ID3D11Buffer> m_dummyVertexBuffer;
+        ComPtr<ID3D11Buffer> m_dummyIndexBuffer;
+        UINT m_dummyIndexCount = 0;
     };
 }

@@ -77,6 +77,34 @@ namespace Overdrive
         return std::sqrt(speedSq);
     }
 
+    void MechController::TrackTarget(const XMFLOAT3& targetPos, float deltaTime, float speed)
+    {
+        float dx = targetPos.x - m_position.x;
+        float dz = targetPos.z - m_position.z;
+        float dy = targetPos.y - (m_position.y + 1.6f);
+
+        float targetDistXZ = std::sqrt(dx * dx + dz * dz);
+        if (targetDistXZ < 0.1f) return;
+
+        float desiredYaw = std::atan2(dx, dz);
+        if (desiredYaw < 0.0f) desiredYaw += XM_2PI;
+
+        float desiredPitch = -std::atan2(dy, targetDistXZ);
+        desiredPitch = std::clamp(desiredPitch, -XM_PIDIV2 * 0.85f, XM_PIDIV2 * 0.85f);
+
+        // Shortest angular difference for yaw
+        float diffYaw = desiredYaw - m_yaw;
+        while (diffYaw > XM_PI) diffYaw -= XM_2PI;
+        while (diffYaw < -XM_PI) diffYaw += XM_2PI;
+
+        float step = std::clamp(speed * deltaTime, 0.0f, 1.0f);
+        m_yaw += diffYaw * step;
+        if (m_yaw > XM_2PI) m_yaw -= XM_2PI;
+        if (m_yaw < 0.0f)   m_yaw += XM_2PI;
+
+        m_pitch += (desiredPitch - m_pitch) * step;
+    }
+
     XMFLOAT3 MechController::GetCockpitHeadPosition() const
     {
         float cosY = std::cos(m_yaw);
@@ -91,6 +119,28 @@ namespace Overdrive
     XMFLOAT3 MechController::GetTPSLookTarget() const
     {
         return XMFLOAT3(m_position.x, m_position.y + 1.6f, m_position.z);
+    }
+
+    XMFLOAT3 MechController::GetLeftMuzzlePosition() const
+    {
+        float abPitch = m_isAssaultBoost ? 0.35f : 0.0f;
+        XMMATRIX rot = XMMatrixRotationRollPitchYaw(m_pitch * 0.3f + abPitch, m_yaw, m_roll);
+        XMVECTOR localPos = XMVectorSet(-0.95f, 1.0f, 1.35f, 1.0f);
+        XMVECTOR worldPos = XMVector3TransformCoord(localPos, rot) + XMLoadFloat3(&m_position);
+        XMFLOAT3 result;
+        XMStoreFloat3(&result, worldPos);
+        return result;
+    }
+
+    XMFLOAT3 MechController::GetRightMuzzlePosition() const
+    {
+        float abPitch = m_isAssaultBoost ? 0.35f : 0.0f;
+        XMMATRIX rot = XMMatrixRotationRollPitchYaw(m_pitch * 0.3f + abPitch, m_yaw, m_roll);
+        XMVECTOR localPos = XMVectorSet(0.95f, 1.0f, 1.35f, 1.0f);
+        XMVECTOR worldPos = XMVector3TransformCoord(localPos, rot) + XMLoadFloat3(&m_position);
+        XMFLOAT3 result;
+        XMStoreFloat3(&result, worldPos);
+        return result;
     }
 
     void MechController::Update(float deltaTime, const MechInputState& input, PhysicsManager* physicsManager)

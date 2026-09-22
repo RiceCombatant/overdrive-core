@@ -2,10 +2,16 @@
 #include <SDL3/SDL.h>
 #include <iostream>
 #include <chrono>
+#include <vector>
 #include "graphics/D3D11Renderer.hpp"
 #include "graphics/Camera.hpp"
 #include "core/MechController.hpp"
 #include "physics/PhysicsManager.hpp"
+#include "combat/WeaponSystem.hpp"
+#include "combat/TargetDummy.hpp"
+#include "combat/TargetLockSystem.hpp"
+
+using namespace DirectX;
 
 int main(int argc, char* argv[])
 {
@@ -20,7 +26,7 @@ int main(int argc, char* argv[])
     const int initialHeight = 720;
 
     SDL_Window* window = SDL_CreateWindow(
-        "Overdrive Core - Jolt Physics Mech Flight & Cockpit Prototype",
+        "Overdrive Core - AC6 Combat & Weapon System Prototype",
         initialWidth,
         initialHeight,
         SDL_WINDOW_RESIZABLE
@@ -62,7 +68,7 @@ int main(int argc, char* argv[])
     // Initialize static scene colliders (Ground, Walls, Pillars, Slopes)
     renderer->GetGridFloor().InitializePhysics(physics.get());
 
-    // 4. Initialize Controller & Camera
+    // 4. Initialize Controller, Camera & Weapons
     Overdrive::MechController mech;
     if (!mech.InitializePhysics(physics.get()))
     {
@@ -73,6 +79,19 @@ int main(int argc, char* argv[])
     }
 
     Overdrive::Camera camera;
+    Overdrive::WeaponSystem weapons;
+
+    // 5. Initialize Target Dummies (Ground, Platform, Aerial)
+    std::vector<Overdrive::TargetDummy> targets = {
+        Overdrive::TargetDummy("Target-01 Ground",    {  10.0f,  1.2f, 35.0f }, { 1.8f, 2.4f, 1.8f }, 400.0f),
+        Overdrive::TargetDummy("Target-02 Platform",  { -25.0f,  7.7f, 48.0f }, { 1.8f, 2.4f, 1.8f }, 500.0f),
+        Overdrive::TargetDummy("Target-03 Aerial",    {   0.0f, 12.0f, 55.0f }, { 2.2f, 2.2f, 2.2f }, 300.0f),
+    };
+
+    for (auto& target : targets)
+    {
+        target.InitializePhysics(physics.get());
+    }
 
     // Detect gamepads
     SDL_Gamepad* gamepad = nullptr;
@@ -88,12 +107,18 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "========================================================" << std::endl;
-    std::cout << " Overdrive Core - Jolt Physics Integration Ready!       " << std::endl;
+    std::cout << " Overdrive Core - FCS Targeting & Lock-On System Online!" << std::endl;
     std::cout << "========================================================" << std::endl;
-    std::cout << " - Try boosting into walls or pillars (Hard Collision)  " << std::endl;
-    std::cout << " - Try sliding up the cyan ramp (Slope Climbing)       " << std::endl;
-    std::cout << " - V Key: Switch [FPV Cockpit <-> TPS Chase]           " << std::endl;
+    std::cout << " [WEAPON & TARGETING CONTROLS]" << std::endl;
+    std::cout << " - Right Click / RT : Fire Right Arm Rifle (Orange Tracer)" << std::endl;
+    std::cout << " - Left Click  / LT : Fire Left Arm Rifle (Cyan Beam)    " << std::endl;
+    std::cout << " - Middle Click/ R3 : Toggle TARGET ASSIST (Hard Lock-on)" << std::endl;
+    std::cout << " - FCS Soft-Lock    : Auto-aims inner red reticle & dist " << std::endl;
+    std::cout << " - V Key            : Switch [FPV Cockpit <-> TPS Chase]" << std::endl;
+    std::cout << " - Target Dummies   : 3 targets placed (Ground, Ramp, Air)" << std::endl;
     std::cout << "========================================================" << std::endl;
+
+    Overdrive::TargetLockSystem targetLock;
 
     bool running = true;
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -101,6 +126,8 @@ int main(int argc, char* argv[])
     while (running)
     {
         Overdrive::MechInputState input;
+        bool fireRightRequested = false;
+        bool fireLeftRequested  = false;
 
         // 1. Process Events
         SDL_Event event;
@@ -136,6 +163,21 @@ int main(int argc, char* argv[])
                     input.assaultBoost = true;
                 }
             }
+            else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+            {
+                if (event.button.button == SDL_BUTTON_RIGHT)
+                {
+                    fireRightRequested = true;
+                }
+                else if (event.button.button == SDL_BUTTON_LEFT)
+                {
+                    fireLeftRequested = true;
+                }
+                else if (event.button.button == SDL_BUTTON_MIDDLE)
+                {
+                    targetLock.ToggleHardLock();
+                }
+            }
             else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
             {
                 if (event.gbutton.button == SDL_GAMEPAD_BUTTON_WEST)
@@ -149,6 +191,10 @@ int main(int argc, char* argv[])
                 else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_STICK)
                 {
                     input.assaultBoost = true;
+                }
+                else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK)
+                {
+                    targetLock.ToggleHardLock();
                 }
                 else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK)
                 {
@@ -167,7 +213,7 @@ int main(int argc, char* argv[])
             }
         }
 
-        // 2. Poll Continuous Keyboard State
+        // 2. Poll Continuous Keyboard & Mouse Buttons (Hold to fire)
         const bool* keyboard = SDL_GetKeyboardState(nullptr);
         if (keyboard[SDL_SCANCODE_W]) input.moveForward += 1.0f;
         if (keyboard[SDL_SCANCODE_S]) input.moveForward -= 1.0f;
@@ -175,7 +221,12 @@ int main(int argc, char* argv[])
         if (keyboard[SDL_SCANCODE_A]) input.moveRight   -= 1.0f;
         if (keyboard[SDL_SCANCODE_SPACE]) input.jumpHold = true;
 
-        // 3. Poll Gamepad Analog State
+        float mouseX, mouseY;
+        SDL_MouseButtonFlags mouseButtons = SDL_GetMouseState(&mouseX, &mouseY);
+        if (mouseButtons & SDL_BUTTON_RMASK) fireRightRequested = true;
+        if (mouseButtons & SDL_BUTTON_LMASK) fireLeftRequested  = true;
+
+        // 3. Poll Gamepad Analog State & Triggers
         if (gamepad)
         {
             float lx = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0f;
@@ -193,6 +244,12 @@ int main(int argc, char* argv[])
             {
                 input.jumpHold = true;
             }
+
+            // Triggers for shooting
+            float lt = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) / 32767.0f;
+            float rt = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) / 32767.0f;
+            if (lt > 0.3f) fireLeftRequested  = true;
+            if (rt > 0.3f) fireRightRequested = true;
         }
 
         // 4. Calculate Delta Time
@@ -205,9 +262,31 @@ int main(int argc, char* argv[])
         mech.Update(deltaTime, input, physics.get());
         camera.Update(deltaTime, mech);
 
-        // 6. Render Frame
+        // 6. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock)
+        float mouseDeltaLen = std::sqrt(input.yawDelta * input.yawDelta + input.pitchDelta * input.pitchDelta);
+        targetLock.Update(deltaTime, camera, mech, targets, mouseDeltaLen);
+
+        // 7. Process Shooting (TargetLock aim target if locked, otherwise camera look target)
+        XMFLOAT3 aimTarget = targetLock.GetAimWorldTarget(camera);
+        if (fireRightRequested)
+        {
+            weapons.FireRightArm(mech.GetRightMuzzlePosition(), aimTarget);
+        }
+        if (fireLeftRequested)
+        {
+            weapons.FireLeftArm(mech.GetLeftMuzzlePosition(), aimTarget);
+        }
+
+        // 8. Update Weapons, Projectiles & Targets
+        weapons.Update(deltaTime, physics.get(), targets);
+        for (auto& target : targets)
+        {
+            target.Update(deltaTime, physics.get());
+        }
+
+        // 9. Render Frame
         renderer->BeginFrame();
-        renderer->RenderScene(camera, mech);
+        renderer->RenderScene(camera, mech, weapons, targets, targetLock);
         renderer->EndFrame();
     }
 
