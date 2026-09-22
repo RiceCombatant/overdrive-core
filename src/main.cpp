@@ -1,4 +1,12 @@
 #define SDL_MAIN_HANDLED
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include "network/NetworkManager.hpp"
 #include <SDL3/SDL.h>
 #include <iostream>
 #include <fstream>
@@ -160,6 +168,70 @@ int main(int argc, char* argv[])
         target.InitializePhysics(physics.get());
     }
 
+    // 5.5 Parse Network Settings from CLI and network.ini
+    std::string netModeStr = "none";
+    std::string connectIp = "127.0.0.1";
+    uint16_t netPort = 7777;
+
+    std::ifstream iniFile("network.ini");
+    if (iniFile.is_open())
+    {
+        std::string line;
+        while (std::getline(iniFile, line))
+        {
+            size_t eqPos = line.find('=');
+            if (eqPos != std::string::npos)
+            {
+                std::string key = line.substr(0, eqPos);
+                std::string val = line.substr(eqPos + 1);
+                auto trim = [](std::string& s) {
+                    size_t start = s.find_first_not_of(" \t\r\n");
+                    size_t end = s.find_last_not_of(" \t\r\n");
+                    if (start == std::string::npos) s.clear();
+                    else s = s.substr(start, end - start + 1);
+                };
+                trim(key);
+                trim(val);
+                if (key == "mode") netModeStr = val;
+                else if (key == "ip") connectIp = val;
+                else if (key == "port") netPort = static_cast<uint16_t>(std::stoi(val));
+            }
+        }
+    }
+
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string arg = argv[i];
+        if (arg == "--host")
+        {
+            netModeStr = "host";
+        }
+        else if (arg == "--connect" && i + 1 < argc)
+        {
+            netModeStr = "client";
+            connectIp = argv[++i];
+        }
+        else if (arg == "--port" && i + 1 < argc)
+        {
+            netPort = static_cast<uint16_t>(std::stoi(argv[++i]));
+        }
+    }
+
+    Overdrive::NetworkManager network;
+    network.Initialize();
+    network.GetRemoteMech().InitializePhysics(physics.get());
+
+    if (netModeStr == "host")
+    {
+        network.StartHost(netPort);
+        mech.Respawn({ 0.0f, 2.0f, -30.0f }, 0.0f); // South side facing North
+    }
+    else if (netModeStr == "client")
+    {
+        network.StartClient(connectIp, netPort);
+        mech.Respawn({ 0.0f, 2.0f, 30.0f }, 3.14159265f); // North side facing South
+    }
+
     // Detect gamepads
     SDL_Gamepad* gamepad = nullptr;
     int numJoysticks = 0;
@@ -179,10 +251,12 @@ int main(int argc, char* argv[])
     std::cout << " [WEAPON & TARGETING CONTROLS]" << std::endl;
     std::cout << " - Right Click / RT : Fire Right Arm Rifle (Orange Tracer)" << std::endl;
     std::cout << " - Left Click  / LT : Fire Left Arm Rifle (Cyan Beam)    " << std::endl;
+    std::cout << " - R Key / D-Pad Down: Reload Weapons (Mag: 30, 2.8s)    " << std::endl;
     std::cout << " - Middle Click/ R3 : Toggle TARGET ASSIST (Hard Lock-on)" << std::endl;
     std::cout << " - FCS Soft-Lock    : Auto-aims inner red reticle & dist " << std::endl;
     std::cout << " - V Key            : Switch [FPV Cockpit <-> TPS Chase]" << std::endl;
-    std::cout << " - Target Dummies   : 3 targets placed (Ground, Ramp, Air)" << std::endl;
+    std::cout << " - H Key            : Start HOST Mode (Listen on Port " << netPort << ")" << std::endl;
+    std::cout << " - C Key            : Connect to Client (" << connectIp << ":" << netPort << ")" << std::endl;
     std::cout << "========================================================" << std::endl;
 
     Overdrive::TargetLockSystem targetLock;
@@ -221,6 +295,10 @@ int main(int argc, char* argv[])
                               << (camera.GetMode() == Overdrive::CameraMode::FPV ? "FPV (Cockpit)" : "TPS (Chase)")
                               << std::endl;
                 }
+                else if (event.key.scancode == SDL_SCANCODE_R)
+                {
+                    weapons.ReloadBoth(&audioManager);
+                }
                 else if (event.key.scancode == SDL_SCANCODE_TAB)
                 {
                     input.boostToggle = true;
@@ -232,6 +310,20 @@ int main(int argc, char* argv[])
                 else if (event.key.scancode == SDL_SCANCODE_LCTRL || event.key.scancode == SDL_SCANCODE_RCTRL)
                 {
                     input.assaultBoost = true;
+                }
+                else if (event.key.scancode == SDL_SCANCODE_F)
+                {
+                    targetLock.ToggleHardLock();
+                }
+                else if (event.key.scancode == SDL_SCANCODE_H)
+                {
+                    network.StartHost(netPort);
+                    mech.Respawn({ 0.0f, 2.0f, -30.0f }, 0.0f);
+                }
+                else if (event.key.scancode == SDL_SCANCODE_C)
+                {
+                    network.StartClient(connectIp, netPort);
+                    mech.Respawn({ 0.0f, 2.0f, 30.0f }, 3.14159265f);
                 }
             }
             else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
@@ -271,12 +363,36 @@ int main(int argc, char* argv[])
                 {
                     camera.ToggleMode();
                 }
+                else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN)
+                {
+                    weapons.ReloadBoth(&audioManager);
+                }
             }
             else if (event.type == SDL_EVENT_MOUSE_MOTION)
             {
                 const float mouseSensitivity = 0.0025f;
                 input.yawDelta   += event.motion.xrel * mouseSensitivity;
                 input.pitchDelta += event.motion.yrel * mouseSensitivity;
+            }
+            else if (event.type == SDL_EVENT_GAMEPAD_ADDED)
+            {
+                if (!gamepad)
+                {
+                    gamepad = SDL_OpenGamepad(event.gdevice.which);
+                    if (gamepad)
+                    {
+                        std::cout << "[GAMEPAD CONNECTED] " << SDL_GetGamepadName(gamepad) << std::endl;
+                    }
+                }
+            }
+            else if (event.type == SDL_EVENT_GAMEPAD_REMOVED)
+            {
+                if (gamepad && event.gdevice.which == SDL_GetJoystickID(SDL_GetGamepadJoystick(gamepad)))
+                {
+                    std::cout << "[GAMEPAD DISCONNECTED]" << std::endl;
+                    SDL_CloseGamepad(gamepad);
+                    gamepad = nullptr;
+                }
             }
             else if (event.type == SDL_EVENT_WINDOW_RESIZED)
             {
@@ -333,48 +449,96 @@ int main(int argc, char* argv[])
         mech.Update(deltaTime, input, physics.get(), &audioManager);
         camera.Update(deltaTime, mech);
 
-        // 6. Update 3D Audio Listener (Camera eye position and forward direction)
-        float sinY = std::sin(mech.GetYaw());
-        float cosY = std::cos(mech.GetYaw());
-        float sinP = std::sin(mech.GetPitch());
-        float cosP = std::cos(mech.GetPitch());
-        XMFLOAT3 camForward = { sinY * cosP, -sinP, cosY * cosP };
-        audioManager.UpdateListener(camera.GetEyePosition(), camForward, XMFLOAT3(0.0f, 1.0f, 0.0f));
+        // 5.5 Auto-respawn local mech if destroyed
+        if (mech.IsDestroyed() && mech.GetRespawnTimer() <= 0.0f)
+        {
+            float spawnZ = (network.GetRole() == Overdrive::NetworkRole::Client) ? 30.0f : -30.0f;
+            float spawnYaw = (network.GetRole() == Overdrive::NetworkRole::Client) ? 3.14159265f : 0.0f;
+            mech.Respawn({ 0.0f, 2.0f, spawnZ }, spawnYaw);
+        }
 
-        // 7. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock)
-        targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager);
+        // 5.6 Update Network Manager (Send 60Hz local state, receive remote packets, update RemoteMech)
+        network.Update(deltaTime, mech, &weapons, &audioManager, physics.get());
 
-        // 8. Process Shooting (TargetLock aim target if locked, otherwise camera look target)
-        XMFLOAT3 aimTarget = targetLock.GetAimWorldTarget(camera);
+        bool vrActive = (vrManager->IsAvailable() && vrManager->IsSessionRunning());
+
+        // 6. Update 3D Audio Listener
+        if (vrActive && vrManager->HasValidTracking())
+        {
+            audioManager.UpdateListener(vrManager->GetHmdPosition(), vrManager->GetHmdForward(), XMFLOAT3(0.0f, 1.0f, 0.0f));
+        }
+        else
+        {
+            float sinY = std::sin(mech.GetYaw());
+            float cosY = std::cos(mech.GetYaw());
+            float sinP = std::sin(mech.GetPitch());
+            float cosP = std::cos(mech.GetPitch());
+            XMFLOAT3 camForward = { sinY * cosP, -sinP, cosY * cosP };
+            audioManager.UpdateListener(camera.GetEyePosition(), camForward, XMFLOAT3(0.0f, 1.0f, 0.0f));
+        }
+
+        // 7. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock with RemoteMech support)
+        if (vrActive && vrManager->HasValidTracking())
+        {
+            XMMATRIX hmdViewProj = XMMatrixMultiply(vrManager->GetHmdView(), vrManager->GetHmdProj());
+            XMFLOAT3 hmdPos = vrManager->GetHmdPosition();
+            targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager, &hmdViewProj, &hmdPos, &network.GetRemoteMech());
+        }
+        else
+        {
+            targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager, nullptr, nullptr, &network.GetRemoteMech());
+        }
+
+        // 8. Process Shooting (TargetLock aim target if locked, otherwise camera/HMD look target)
+        XMFLOAT3 aimTarget;
+        if (vrActive && vrManager->HasValidTracking())
+        {
+            XMFLOAT3 hmdPos = vrManager->GetHmdPosition();
+            XMFLOAT3 hmdFwd = vrManager->GetHmdForward();
+            XMFLOAT3 hmdLookTarget = { hmdPos.x + hmdFwd.x * 50.0f, hmdPos.y + hmdFwd.y * 50.0f, hmdPos.z + hmdFwd.z * 50.0f };
+            aimTarget = targetLock.GetAimWorldTarget(camera, &hmdLookTarget);
+        }
+        else
+        {
+            aimTarget = targetLock.GetAimWorldTarget(camera);
+        }
+
         if (fireRightRequested)
         {
-            weapons.FireRightArm(mech.GetRightMuzzlePosition(), aimTarget, &audioManager);
+            if (weapons.FireRightArm(mech.GetRightMuzzlePosition(), aimTarget, &audioManager))
+            {
+                network.SendFireEvent(false, mech.GetRightMuzzlePosition(), aimTarget);
+            }
         }
         if (fireLeftRequested)
         {
-            weapons.FireLeftArm(mech.GetLeftMuzzlePosition(), aimTarget, &audioManager);
+            if (weapons.FireLeftArm(mech.GetLeftMuzzlePosition(), aimTarget, &audioManager))
+            {
+                network.SendFireEvent(true, mech.GetLeftMuzzlePosition(), aimTarget);
+            }
         }
 
-        // 9. Update Weapons, Projectiles & Targets
-        weapons.Update(deltaTime, physics.get(), targets, &audioManager);
+        // 9. Update Weapons, Projectiles & Targets (Raycasts against remote mech and dummies)
+        weapons.Update(deltaTime, physics.get(), targets, &audioManager, &network.GetRemoteMech(), &network);
         for (auto& target : targets)
         {
             target.Update(deltaTime, physics.get());
         }
 
         // 10. Render Frame (Stereo VR if HMD active, and Desktop window mirror)
-        bool vrActive = (vrManager->IsAvailable() && vrManager->IsSessionRunning());
         if (vrActive)
         {
-            vrManager->RenderFrame(renderer.get(), mech, weapons, targets, targetLock);
+            vrManager->RenderFrame(renderer.get(), mech, weapons, targets, targetLock, &network.GetRemoteMech(), &network);
         }
 
         // Render to Desktop Window (Mirror view)
         // When VR is active, disable desktop VSync to avoid competing with HMD display refresh
         renderer->BeginFrame();
-        renderer->RenderScene(camera, mech, weapons, targets, targetLock);
+        renderer->RenderScene(camera, mech, weapons, targets, targetLock, &network.GetRemoteMech(), &network);
         renderer->EndFrame(!vrActive);
     }
+
+    network.Shutdown();
 
     // Cleanup
     if (gamepad)
