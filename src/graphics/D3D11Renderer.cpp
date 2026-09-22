@@ -1,6 +1,8 @@
 #include "D3D11Renderer.hpp"
 #include "combat/TargetLockSystem.hpp"
 #include <d3dcompiler.h>
+#include <dxgi.h>
+#include <dxgi1_2.h>
 #include <iostream>
 #include <cmath>
 #include <string>
@@ -115,13 +117,13 @@ namespace Overdrive
         CleanupRenderTarget();
     }
 
-    bool D3D11Renderer::Initialize(HWND hwnd, int width, int height)
+    bool D3D11Renderer::Initialize(HWND hwnd, int width, int height, const LUID* preferredLuid)
     {
         m_hwnd = hwnd;
         m_width = width;
         m_height = height;
 
-        if (!CreateDeviceAndSwapChain(hwnd)) return false;
+        if (!CreateDeviceAndSwapChain(hwnd, preferredLuid)) return false;
         if (!CreateRenderTargetAndDepthBuffer()) return false;
         if (!InitShadersAndInputLayout()) return false;
         if (!m_gridFloor.Initialize(m_device.Get())) return false;
@@ -132,7 +134,7 @@ namespace Overdrive
         return true;
     }
 
-    bool D3D11Renderer::CreateDeviceAndSwapChain(HWND hwnd)
+    bool D3D11Renderer::CreateDeviceAndSwapChain(HWND hwnd, const LUID* preferredLuid)
     {
         DXGI_SWAP_CHAIN_DESC scd = {};
         scd.BufferCount = 2;
@@ -159,9 +161,34 @@ namespace Overdrive
         };
         D3D_FEATURE_LEVEL featureLevel;
 
+        // Try to match preferred LUID (e.g. GPU adapter requested by OpenXR/Meta Quest)
+        ComPtr<IDXGIAdapter1> chosenAdapter;
+        if (preferredLuid && (preferredLuid->LowPart != 0 || preferredLuid->HighPart != 0))
+        {
+            ComPtr<IDXGIFactory1> dxgiFactory;
+            if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(dxgiFactory.GetAddressOf()))))
+            {
+                for (UINT i = 0; ; ++i)
+                {
+                    ComPtr<IDXGIAdapter1> adapter;
+                    if (FAILED(dxgiFactory->EnumAdapters1(i, adapter.GetAddressOf()))) break;
+                    DXGI_ADAPTER_DESC1 desc;
+                    adapter->GetDesc1(&desc);
+                    if (memcmp(&desc.AdapterLuid, preferredLuid, sizeof(LUID)) == 0)
+                    {
+                        chosenAdapter = adapter;
+                        std::wcout << L"[D3D11] Matching OpenXR GPU Adapter Selected: " << desc.Description << std::endl;
+                        break;
+                    }
+                }
+            }
+        }
+
+        D3D_DRIVER_TYPE driverType = chosenAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
+
         HRESULT hr = D3D11CreateDeviceAndSwapChain(
-            nullptr,
-            D3D_DRIVER_TYPE_HARDWARE,
+            chosenAdapter.Get(),
+            driverType,
             nullptr,
             createDeviceFlags,
             featureLevels,
@@ -177,8 +204,8 @@ namespace Overdrive
         if (FAILED(hr))
         {
             hr = D3D11CreateDeviceAndSwapChain(
-                nullptr,
-                D3D_DRIVER_TYPE_HARDWARE,
+                chosenAdapter.Get(),
+                driverType,
                 nullptr,
                 createDeviceFlags,
                 &featureLevels[1],

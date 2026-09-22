@@ -1,6 +1,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 #include <iostream>
+#include <fstream>
 #include <chrono>
 #include <vector>
 #include "graphics/D3D11Renderer.hpp"
@@ -15,8 +16,50 @@
 
 using namespace DirectX;
 
+namespace
+{
+    class TeeBuf : public std::streambuf
+    {
+    public:
+        TeeBuf(std::streambuf* sb1, std::streambuf* sb2) : m_sb1(sb1), m_sb2(sb2) {}
+    protected:
+        int overflow(int c) override
+        {
+            if (c == EOF) return !EOF;
+            if (m_sb1) m_sb1->sputc(c);
+            if (m_sb2) m_sb2->sputc(c);
+            return c;
+        }
+        int sync() override
+        {
+            if (m_sb1) m_sb1->pubsync();
+            if (m_sb2) m_sb2->pubsync();
+            return 0;
+        }
+    private:
+        std::streambuf* m_sb1;
+        std::streambuf* m_sb2;
+    };
+}
+
 int main(int argc, char* argv[])
 {
+    // Enable logging to both console and overdrive_vr.log
+    std::ofstream logFile("overdrive_vr.log", std::ios::trunc);
+    std::streambuf* oldCoutBuf = std::cout.rdbuf();
+    std::streambuf* oldCerrBuf = std::cerr.rdbuf();
+    std::unique_ptr<TeeBuf> teeCout;
+    std::unique_ptr<TeeBuf> teeCerr;
+    if (logFile.is_open())
+    {
+        teeCout = std::make_unique<TeeBuf>(oldCoutBuf, logFile.rdbuf());
+        teeCerr = std::make_unique<TeeBuf>(oldCerrBuf, logFile.rdbuf());
+        std::cout.rdbuf(teeCout.get());
+        std::cerr.rdbuf(teeCerr.get());
+    }
+
+    std::cout << "[SYSTEM] Overdrive Core Starting..." << std::endl;
+
     // 1. Initialize SDL3
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
@@ -47,9 +90,14 @@ int main(int argc, char* argv[])
     SDL_PropertiesID props = SDL_GetWindowProperties(window);
     HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
 
-    // 2. Initialize DirectX 11 Renderer
+    // 2. Probe OpenXR Subsystem & Query GPU Adapter LUID
+    auto vrManager = std::make_unique<Overdrive::VRManager>();
+    LUID preferredLuid = {};
+    bool openXrDetected = vrManager->PreInitialize(&preferredLuid);
+
+    // 2.5 Initialize DirectX 11 Renderer with matching GPU Adapter
     auto renderer = std::make_unique<Overdrive::D3D11Renderer>();
-    if (!renderer->Initialize(hwnd, initialWidth, initialHeight))
+    if (!renderer->Initialize(hwnd, initialWidth, initialHeight, openXrDetected ? &preferredLuid : nullptr))
     {
         std::cerr << "Failed to initialize D3D11 Renderer." << std::endl;
         SDL_DestroyWindow(window);
@@ -57,11 +105,17 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    // 2.5 Initialize OpenXR PCVR Subsystem (Quest 3S / PCVR)
-    auto vrManager = std::make_unique<Overdrive::VRManager>();
-    if (vrManager->Initialize(renderer->GetDevice(), renderer->GetContext()))
+    // 2.6 Initialize OpenXR Session & Swapchains using matched D3D11 Device
+    if (openXrDetected)
     {
-        std::cout << "[VR] OpenXR Subsystem initialized successfully. HMD is active!" << std::endl;
+        if (vrManager->Initialize(renderer->GetDevice(), renderer->GetContext()))
+        {
+            std::cout << "[VR] OpenXR Subsystem initialized successfully. HMD is active!" << std::endl;
+        }
+        else
+        {
+            std::cout << "[VR] Failed to initialize OpenXR Session. Falling back to Standard Desktop Mode." << std::endl;
+        }
     }
     else
     {
@@ -334,5 +388,7 @@ int main(int argc, char* argv[])
     SDL_Quit();
 
     std::cout << "Application closed." << std::endl;
+    if (oldCoutBuf) std::cout.rdbuf(oldCoutBuf);
+    if (oldCerrBuf) std::cerr.rdbuf(oldCerrBuf);
     return 0;
 }

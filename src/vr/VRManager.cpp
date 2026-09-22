@@ -19,36 +19,78 @@ namespace Overdrive
         Shutdown();
     }
 
-    bool VRManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
+    bool VRManager::PreInitialize(LUID* outLuid)
     {
-        if (!device || !context) return false;
+        if (outLuid) { outLuid->LowPart = 0; outLuid->HighPart = 0; }
 
-        std::cout << "[VR] Checking for OpenXR Runtime (Meta Quest / SteamVR)..." << std::endl;
+        std::cout << "[VR] Probing OpenXR Runtime (Meta Quest / SteamVR)..." << std::endl;
 
         if (!CreateInstance())
         {
-            std::cout << "[VR] OpenXR runtime not available. Running in standard Desktop mode." << std::endl;
-            m_isAvailable = false;
+            std::cout << "[VR] OpenXR runtime not available or not running." << std::endl;
             return false;
         }
 
         if (!GetSystem())
         {
-            std::cout << "[VR] No VR Headset (HMD) detected. Running in standard Desktop mode." << std::endl;
+            std::cout << "[VR] No VR Headset (HMD) detected by OpenXR runtime." << std::endl;
             Shutdown();
             return false;
         }
 
+        // Query D3D11 Requirements to obtain requested GPU LUID
+        PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetD3D11Reqs = nullptr;
+        xrGetInstanceProcAddr(
+            m_instance,
+            "xrGetD3D11GraphicsRequirementsKHR",
+            reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D11Reqs)
+        );
+
+        if (pfnGetD3D11Reqs)
+        {
+            XrGraphicsRequirementsD3D11KHR graphicsReqs = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+            XrResult res = pfnGetD3D11Reqs(m_instance, m_systemId, &graphicsReqs);
+            if (res == XR_SUCCESS)
+            {
+                m_requiredLuid = graphicsReqs.adapterLuid;
+                if (outLuid)
+                {
+                    *outLuid = graphicsReqs.adapterLuid;
+                }
+                std::cout << "[VR] OpenXR Runtime requires GPU Adapter LUID: " << graphicsReqs.adapterLuid.LowPart << ":" << graphicsReqs.adapterLuid.HighPart << std::endl;
+            }
+            else
+            {
+                std::cout << "[VR] Query D3D11 requirements returned XrResult: " << res << std::endl;
+            }
+        }
+
+        return true;
+    }
+
+    bool VRManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
+    {
+        if (!device || !context) return false;
+
+        // Ensure PreInitialize was executed
+        if (m_instance == XR_NULL_HANDLE || m_systemId == XR_NULL_SYSTEM_ID)
+        {
+            if (!PreInitialize(nullptr))
+            {
+                return false;
+            }
+        }
+
         if (!CreateSession(device))
         {
-            std::cout << "[VR] Failed to create OpenXR session. Running in standard Desktop mode." << std::endl;
+            std::cout << "[VR] Failed to create OpenXR session with D3D11 device." << std::endl;
             Shutdown();
             return false;
         }
 
         if (!CreateSwapchains(device))
         {
-            std::cout << "[VR] Failed to create OpenXR swapchains. Running in standard Desktop mode." << std::endl;
+            std::cout << "[VR] Failed to create OpenXR swapchains." << std::endl;
             Shutdown();
             return false;
         }
@@ -177,7 +219,11 @@ namespace Overdrive
         sessionInfo.systemId = m_systemId;
 
         XrResult res = xrCreateSession(m_instance, &sessionInfo, &m_session);
-        if (res != XR_SUCCESS) return false;
+        if (res != XR_SUCCESS)
+        {
+            std::cout << "[VR ERROR] xrCreateSession failed with XrResult: " << res << std::endl;
+            return false;
+        }
 
         // Create Reference Space (LOCAL for seated mech cockpit experience)
         XrReferenceSpaceCreateInfo spaceInfo = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
@@ -186,7 +232,12 @@ namespace Overdrive
         spaceInfo.poseInReferenceSpace.position = { 0, 0, 0 };
 
         res = xrCreateReferenceSpace(m_session, &spaceInfo, &m_appSpace);
-        return (res == XR_SUCCESS);
+        if (res != XR_SUCCESS)
+        {
+            std::cout << "[VR ERROR] xrCreateReferenceSpace failed with XrResult: " << res << std::endl;
+            return false;
+        }
+        return true;
     }
 
     DXGI_FORMAT VRManager::SelectSwapchainFormat(const std::vector<int64_t>& runtimeFormats)
@@ -252,7 +303,11 @@ namespace Overdrive
             scInfo.mipCount = 1;
 
             XrResult res = xrCreateSwapchain(m_session, &scInfo, &eye.swapchain);
-            if (res != XR_SUCCESS) return false;
+            if (res != XR_SUCCESS)
+            {
+                std::cout << "[VR ERROR] xrCreateSwapchain for eye " << i << " failed with XrResult: " << res << std::endl;
+                return false;
+            }
 
             uint32_t imageCount = 0;
             xrEnumerateSwapchainImages(eye.swapchain, 0, &imageCount, nullptr);

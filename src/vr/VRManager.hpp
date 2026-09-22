@@ -51,12 +51,16 @@ namespace Overdrive
         VRManager();
         ~VRManager();
 
+        // Probes OpenXR runtime and returns required GPU Adapter LUID if available
+        bool PreInitialize(LUID* outLuid = nullptr);
+
         // Initialize OpenXR runtime with D3D11 device. Returns false if no HMD/runtime is available.
         bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context);
         void Shutdown();
 
         bool IsAvailable() const { return m_isAvailable; }
         bool IsSessionRunning() const { return m_isSessionRunning; }
+        LUID GetRequiredLuid() const { return m_requiredLuid; }
 
         // Poll OpenXR events (session state transitions, focus, pause)
         void PollEvents();
@@ -85,6 +89,7 @@ namespace Overdrive
 
         bool m_isAvailable = false;
         bool m_isSessionRunning = false;
+        LUID m_requiredLuid = {};
 
         XrInstance m_instance = XR_NULL_HANDLE;
         XrSystemId m_systemId = XR_NULL_SYSTEM_ID;

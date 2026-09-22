@@ -30,7 +30,7 @@ namespace Overdrive
         D3D11Renderer();
         ~D3D11Renderer();
 
-        bool Initialize(HWND hwnd, int width, int height);
+        bool Initialize(HWND hwnd, int width, int height, const LUID* preferredLuid = nullptr);
         void Resize(int width, int height);
         void BeginFrame();
         void EndFrame(bool vsync = true);
@@ -65,7 +65,7 @@ namespace Overdrive
         GridFloor& GetGridFloor() { return m_gridFloor; }
 
     private:
-        bool CreateDeviceAndSwapChain(HWND hwnd);
+        bool CreateDeviceAndSwapChain(HWND hwnd, const LUID* preferredLuid = nullptr);
         bool CreateRenderTargetAndDepthBuffer();
         bool InitShadersAndInputLayout();
         bool InitMechGeometry();
