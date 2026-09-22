@@ -40,7 +40,8 @@ namespace Overdrive
             const Camera& camera,
             MechController& mech,
             const std::vector<TargetDummy>& targets,
-            float mouseDeltaLen,
+            float yawDelta,
+            float pitchDelta,
             AudioManager* audio = nullptr);
 
         const LockTargetInfo& GetCurrentTarget() const { return m_targetInfo; }

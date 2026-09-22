@@ -274,8 +274,7 @@ int main(int argc, char* argv[])
         audioManager.UpdateListener(camera.GetEyePosition(), camForward, XMFLOAT3(0.0f, 1.0f, 0.0f));
 
         // 7. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock)
-        float mouseDeltaLen = std::sqrt(input.yawDelta * input.yawDelta + input.pitchDelta * input.pitchDelta);
-        targetLock.Update(deltaTime, camera, mech, targets, mouseDeltaLen, &audioManager);
+        targetLock.Update(deltaTime, camera, mech, targets, input.yawDelta, input.pitchDelta, &audioManager);
 
         // 8. Process Shooting (TargetLock aim target if locked, otherwise camera look target)
         XMFLOAT3 aimTarget = targetLock.GetAimWorldTarget(camera);

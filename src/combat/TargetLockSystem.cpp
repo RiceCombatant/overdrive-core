@@ -55,34 +55,30 @@ namespace Overdrive
         const Camera& camera,
         MechController& mech,
         const std::vector<TargetDummy>& targets,
-        float mouseDeltaLen,
+        float yawDelta,
+        float pitchDelta,
         AudioManager* audio)
     {
         if (deltaTime <= 0.0f) return;
 
-        // AC6 Mechanic: Intentional large flick/swipe of mouse disengages Target Assist
-        // Raised threshold to 0.45f so normal movement/aiming doesn't accidentally cancel Hard-Lock
-        if (m_isHardLockEnabled && mouseDeltaLen > 0.45f)
-        {
-            m_isHardLockEnabled = false;
-            m_lockedTargetIndex = -1;
-            std::cout << "[TARGET ASSIST] Disengaged due to manual camera flick" << std::endl;
-        }
+        float mouseDeltaLen = std::sqrt(yawDelta * yawDelta + pitchDelta * pitchDelta);
 
         // 1. Calculate View-Projection Matrix
-        // Standard aspect ratio for projection
         XMMATRIX viewMat = camera.GetViewMatrix();
         XMMATRIX projMat = camera.GetProjectionMatrix(16.0f / 9.0f);
         XMMATRIX viewProj = XMMatrixMultiply(viewMat, projMat);
 
         XMFLOAT3 mechPos = mech.GetPosition();
 
-        // 2. Find best target in view
-        int bestIdx = -1;
-        float bestScore = 999999.0f;
-        XMFLOAT2 bestNdc = { 0.0f, 0.0f };
-        XMFLOAT3 bestWorldPos = { 0.0f, 0.0f, 0.0f };
-        float bestDist = 0.0f;
+        // 2. Gather all visible alive target candidates
+        struct TargetCandidate {
+            int idx;
+            XMFLOAT2 ndc;
+            XMFLOAT3 worldPos;
+            float worldDist;
+            float screenDist;
+        };
+        std::vector<TargetCandidate> candidates;
 
         for (int i = 0; i < static_cast<int>(targets.size()); ++i)
         {
@@ -92,47 +88,115 @@ namespace Overdrive
             XMFLOAT3 pos = t.GetPosition();
             pos.y += 0.2f; // Aim at core body
 
-            // Transform target position into Clip / NDC coordinates
             XMVECTOR worldVec = XMVectorSet(pos.x, pos.y, pos.z, 1.0f);
             XMVECTOR clipVec  = XMVector4Transform(worldVec, viewProj);
             XMFLOAT4 clip;
             XMStoreFloat4(&clip, clipVec);
 
-            // Must be in front of the camera
             if (clip.w <= 0.1f) continue;
 
             float ndcX = clip.x / clip.w;
             float ndcY = clip.y / clip.w;
             float ndcZ = clip.z / clip.w;
 
-            // Must be within near/far planes
             if (ndcZ < 0.0f || ndcZ > 1.0f) continue;
 
             float screenDist = std::sqrt(ndcX * ndcX + ndcY * ndcY);
 
-            // Calculate 3D distance to mech
             float dx = pos.x - mechPos.x;
             float dy = pos.y - mechPos.y;
             float dz = pos.z - mechPos.z;
             float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-            // FCS effective detection radius:
-            // For already-locked targets in Hard-Lock mode, allow a generous boundary (1.40)
-            // so aggressive QB dashes or vertical ascents won't lose lock!
-            float maxScreenDist = (m_isHardLockEnabled && m_lockedTargetIndex == i) ? 1.40f : 0.85f;
-            if (screenDist < maxScreenDist && worldDist < 450.0f)
+            candidates.push_back({ i, { ndcX, ndcY }, pos, worldDist, screenDist });
+        }
+
+        // AC6 Target Switching Mechanic:
+        // When in Hard-Lock mode and player moves view away from current locked target (flick/swipe),
+        // switch lock-on to the next enemy in the direction of the swipe!
+        if (m_isHardLockEnabled && m_lockedTargetIndex >= 0 && mouseDeltaLen > 0.040f)
+        {
+            XMFLOAT2 currentNdc = { 0.0f, 0.0f };
+            for (const auto& c : candidates)
             {
-                // If Hard Lock is enabled and this was already our locked target, strongly prioritize it
-                float bonus = (m_isHardLockEnabled && m_lockedTargetIndex == i) ? -800.0f : 0.0f;
-                float score = screenDist * 120.0f + worldDist + bonus;
+                if (c.idx == m_lockedTargetIndex)
+                {
+                    currentNdc = c.ndc;
+                    break;
+                }
+            }
+
+            // Input swipe direction in screen NDC space
+            // yawDelta > 0 is moving right (+X), pitchDelta > 0 is moving down (-Y)
+            float inputDirX = yawDelta / mouseDeltaLen;
+            float inputDirY = -pitchDelta / mouseDeltaLen;
+
+            int switchIdx = -1;
+            float bestDot = 0.15f; // Must be in the general swipe direction (> ~80 degrees)
+            float bestScore = 999999.0f;
+
+            for (const auto& c : candidates)
+            {
+                if (c.idx == m_lockedTargetIndex) continue; // Must be another target
+
+                float toTargetX = c.ndc.x - currentNdc.x;
+                float toTargetY = c.ndc.y - currentNdc.y;
+                float toTargetLen = std::sqrt(toTargetX * toTargetX + toTargetY * toTargetY);
+                if (toTargetLen < 0.001f) continue;
+
+                toTargetX /= toTargetLen;
+                toTargetY /= toTargetLen;
+
+                float dot = inputDirX * toTargetX + inputDirY * toTargetY;
+                if (dot > bestDot)
+                {
+                    float score = c.worldDist - dot * 80.0f;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestDot = dot;
+                        switchIdx = c.idx;
+                    }
+                }
+            }
+
+            if (switchIdx >= 0)
+            {
+                m_lockedTargetIndex = switchIdx;
+                if (audio) audio->PlayLockOn();
+                std::cout << "[TARGET ASSIST] Switched lock-on to target #" << switchIdx << std::endl;
+            }
+            else if (mouseDeltaLen > 0.35f)
+            {
+                // Large manual movement with no other target in that direction disengages target assist
+                m_isHardLockEnabled = false;
+                m_lockedTargetIndex = -1;
+                std::cout << "[TARGET ASSIST] Disengaged due to manual camera flick" << std::endl;
+            }
+        }
+
+        // 3. Find best primary target in view
+        int bestIdx = -1;
+        float bestScore = 999999.0f;
+        XMFLOAT2 bestNdc = { 0.0f, 0.0f };
+        XMFLOAT3 bestWorldPos = { 0.0f, 0.0f, 0.0f };
+        float bestDist = 0.0f;
+
+        for (const auto& c : candidates)
+        {
+            float maxScreenDist = (m_isHardLockEnabled && m_lockedTargetIndex == c.idx) ? 1.40f : 0.85f;
+            if (c.screenDist < maxScreenDist && c.worldDist < 450.0f)
+            {
+                float bonus = (m_isHardLockEnabled && m_lockedTargetIndex == c.idx) ? -800.0f : 0.0f;
+                float score = c.screenDist * 120.0f + c.worldDist + bonus;
 
                 if (score < bestScore)
                 {
                     bestScore = score;
-                    bestIdx = i;
-                    bestNdc = { ndcX, ndcY };
-                    bestWorldPos = pos;
-                    bestDist = worldDist;
+                    bestIdx = c.idx;
+                    bestNdc = c.ndc;
+                    bestWorldPos = c.worldPos;
+                    bestDist = c.worldDist;
                 }
             }
         }

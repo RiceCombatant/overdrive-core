@@ -82,6 +82,9 @@ namespace Overdrive
             return false;
         }
 
+        // Set comfortable master volume (55%) to avoid ear fatigue
+        ma_engine_set_volume(m_engine.get(), 0.55f);
+
         // 3. Load sound pools
         auto loadSoundPool = [&](const std::string& path, std::vector<std::unique_ptr<ma_sound>>& pool, bool spatial) {
             pool.resize(c_poolSize);
@@ -119,8 +122,8 @@ namespace Overdrive
         {
             ma_sound_set_looping(m_boostLoopSound.get(), MA_TRUE);
             ma_sound_set_volume(m_boostLoopSound.get(), 0.0f);
-            ma_sound_set_min_distance(m_boostLoopSound.get(), 2.0f);
-            ma_sound_set_max_distance(m_boostLoopSound.get(), 80.0f);
+            ma_sound_set_min_distance(m_boostLoopSound.get(), 3.0f);
+            ma_sound_set_max_distance(m_boostLoopSound.get(), 60.0f);
             ma_sound_start(m_boostLoopSound.get());
             m_isBoostLoopPlaying = true;
         }
@@ -176,7 +179,7 @@ namespace Overdrive
         m_shootRightIdx = (m_shootRightIdx + 1) % c_poolSize;
 
         ma_sound_set_position(sound.get(), muzzlePos.x, muzzlePos.y, muzzlePos.z);
-        ma_sound_set_volume(sound.get(), 0.90f);
+        ma_sound_set_volume(sound.get(), 0.55f);
         ma_sound_seek_to_pcm_frame(sound.get(), 0);
         ma_sound_start(sound.get());
     }
@@ -188,7 +191,7 @@ namespace Overdrive
         m_shootLeftIdx = (m_shootLeftIdx + 1) % c_poolSize;
 
         ma_sound_set_position(sound.get(), muzzlePos.x, muzzlePos.y, muzzlePos.z);
-        ma_sound_set_volume(sound.get(), 0.90f);
+        ma_sound_set_volume(sound.get(), 0.50f);
         ma_sound_seek_to_pcm_frame(sound.get(), 0);
         ma_sound_start(sound.get());
     }
@@ -200,7 +203,7 @@ namespace Overdrive
         m_qbIdx = (m_qbIdx + 1) % c_poolSize;
 
         ma_sound_set_position(sound.get(), mechPos.x, mechPos.y, mechPos.z);
-        ma_sound_set_volume(sound.get(), 1.0f);
+        ma_sound_set_volume(sound.get(), 0.70f);
         ma_sound_seek_to_pcm_frame(sound.get(), 0);
         ma_sound_start(sound.get());
     }
@@ -212,7 +215,7 @@ namespace Overdrive
         m_explosionIdx = (m_explosionIdx + 1) % c_poolSize;
 
         ma_sound_set_position(sound.get(), hitPos.x, hitPos.y, hitPos.z);
-        ma_sound_set_volume(sound.get(), std::clamp(volume, 0.1f, 1.2f));
+        ma_sound_set_volume(sound.get(), std::clamp(volume * 0.60f, 0.1f, 0.75f));
         ma_sound_seek_to_pcm_frame(sound.get(), 0);
         ma_sound_start(sound.get());
     }
@@ -223,7 +226,7 @@ namespace Overdrive
         auto& sound = m_lockOnSounds[m_lockOnIdx];
         m_lockOnIdx = (m_lockOnIdx + 1) % c_poolSize;
 
-        ma_sound_set_volume(sound.get(), 0.70f);
+        ma_sound_set_volume(sound.get(), 0.40f);
         ma_sound_seek_to_pcm_frame(sound.get(), 0);
         ma_sound_start(sound.get());
     }
@@ -234,11 +237,13 @@ namespace Overdrive
 
         ma_sound_set_position(m_boostLoopSound.get(), mechPos.x, mechPos.y, mechPos.z);
 
-        float targetVol = isBoosting ? std::clamp(speedRatio * 0.45f, 0.08f, 0.45f) : 0.0f;
+        // Completely silent when stationary or not moving
+        float targetVol = (isBoosting && speedRatio > 0.08f) ? std::clamp(speedRatio * 0.15f, 0.02f, 0.15f) : 0.0f;
         float currentVol = ma_sound_get_volume(m_boostLoopSound.get());
         float newVol = currentVol + (targetVol - currentVol) * 0.15f;
+        if (newVol < 0.005f) newVol = 0.0f;
         ma_sound_set_volume(m_boostLoopSound.get(), newVol);
-        ma_sound_set_pitch(m_boostLoopSound.get(), 0.9f + speedRatio * 0.35f);
+        ma_sound_set_pitch(m_boostLoopSound.get(), 0.90f + speedRatio * 0.25f);
     }
 
     bool AudioManager::EnsureAudioAssetsExist()
@@ -399,22 +404,25 @@ namespace Overdrive
             SaveWavFile("assets/audio/lock_on.wav", samples, sampleRate);
         }
 
-        // 6. Boost Loop: Seamless continuous engine hum & air stream
+        // 6. Boost Loop: Smooth, warm sci-fi thruster hum (NO harsh white noise)
         {
             float duration = 1.0f;
             int totalSamples = static_cast<int>(sampleRate * duration);
             std::vector<int16_t> samples(totalSamples);
-            float p1 = 0.0f, p2 = 0.0f;
+            float p1 = 0.0f, p2 = 0.0f, p3 = 0.0f;
 
             for (int i = 0; i < totalSamples; ++i)
             {
-                p1 += XM_2PI * 130.0f / sampleRate;
-                p2 += XM_2PI * 260.0f / sampleRate;
-                float hum = std::sin(p1) * 0.4f + std::sin(p2) * 0.2f;
-                float air = noiseDist(rng) * 0.4f;
+                // Pure deep thruster harmonics (65Hz fundamental, 130Hz octave, 195Hz warm overtone)
+                p1 += XM_2PI * 65.0f / sampleRate;
+                p2 += XM_2PI * 130.0f / sampleRate;
+                p3 += XM_2PI * 195.0f / sampleRate;
 
-                float sample = hum + air;
-                samples[i] = static_cast<int16_t>(std::clamp(sample, -1.0f, 1.0f) * 32767.0f * 0.35f);
+                float hum = std::sin(p1) * 0.55f + std::sin(p2) * 0.30f + std::sin(p3) * 0.15f;
+                // Soft compression to avoid clipping
+                float sample = std::tanh(hum) * 0.35f;
+
+                samples[i] = static_cast<int16_t>(std::clamp(sample, -1.0f, 1.0f) * 32767.0f * 0.25f);
             }
             SaveWavFile("assets/audio/boost_loop.wav", samples, sampleRate);
         }
