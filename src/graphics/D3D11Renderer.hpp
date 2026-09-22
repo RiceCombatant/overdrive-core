@@ -43,6 +43,23 @@ namespace Overdrive
             const TargetLockSystem& lockSystem
         );
 
+        // OpenXR Stereo VR Eye rendering
+        void RenderVREye(
+            const XMMATRIX& view,
+            const XMMATRIX& proj,
+            ID3D11RenderTargetView* rtv,
+            ID3D11DepthStencilView* dsv,
+            const D3D11_VIEWPORT& viewport,
+            const MechController& mech,
+            const WeaponSystem& weapons,
+            const std::vector<TargetDummy>& targets,
+            const TargetLockSystem& lockSystem,
+            bool isLeftEye
+        );
+
+        ID3D11Device* GetDevice() const { return m_device.Get(); }
+        ID3D11DeviceContext* GetContext() const { return m_context.Get(); }
+
         int GetWidth() const { return m_width; }
         int GetHeight() const { return m_height; }
         GridFloor& GetGridFloor() { return m_gridFloor; }

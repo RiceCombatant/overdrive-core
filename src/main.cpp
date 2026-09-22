@@ -11,6 +11,7 @@
 #include "combat/TargetDummy.hpp"
 #include "combat/TargetLockSystem.hpp"
 #include "audio/AudioManager.hpp"
+#include "vr/VRManager.hpp"
 
 using namespace DirectX;
 
@@ -54,6 +55,17 @@ int main(int argc, char* argv[])
         SDL_DestroyWindow(window);
         SDL_Quit();
         return -1;
+    }
+
+    // 2.5 Initialize OpenXR PCVR Subsystem (Quest 3S / PCVR)
+    auto vrManager = std::make_unique<Overdrive::VRManager>();
+    if (vrManager->Initialize(renderer->GetDevice(), renderer->GetContext()))
+    {
+        std::cout << "[VR] OpenXR Subsystem initialized successfully. HMD is active!" << std::endl;
+    }
+    else
+    {
+        std::cout << "[VR] OpenXR not detected or HMD inactive. Falling back to Standard Desktop Mode." << std::endl;
     }
 
     // 3. Initialize Jolt Physics System
@@ -132,7 +144,9 @@ int main(int argc, char* argv[])
         bool fireRightRequested = false;
         bool fireLeftRequested  = false;
 
-        // 1. Process Events
+        // 1. Process OpenXR & SDL Events
+        vrManager->PollEvents();
+
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
@@ -294,7 +308,17 @@ int main(int argc, char* argv[])
             target.Update(deltaTime, physics.get());
         }
 
-        // 9. Render Frame
+        // 10. Render Frame (Stereo VR if HMD active, and Desktop window mirror)
+        if (vrManager->IsAvailable() && vrManager->IsSessionRunning())
+        {
+            if (vrManager->BeginFrame(mech))
+            {
+                vrManager->RenderStereo(renderer.get(), mech, weapons, targets, targetLock);
+                vrManager->EndFrame();
+            }
+        }
+
+        // Render to Desktop Window (Mirror view)
         renderer->BeginFrame();
         renderer->RenderScene(camera, mech, weapons, targets, targetLock);
         renderer->EndFrame();
@@ -305,6 +329,7 @@ int main(int argc, char* argv[])
     {
         SDL_CloseGamepad(gamepad);
     }
+    vrManager.reset();
     renderer.reset();
     physics.reset();
     SDL_DestroyWindow(window);

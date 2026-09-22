@@ -51,6 +51,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(miniaudio)
 
+# OpenXR SDK (Khronos Group official loader for PCVR / Quest 3S)
+set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    OpenXR
+    GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK-Source.git
+    GIT_TAG        release-1.1.43
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(OpenXR)
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -63,6 +75,7 @@ set(SOURCES
     src/combat/TargetDummy.cpp
     src/combat/TargetLockSystem.cpp
     src/audio/AudioManager.cpp
+    src/vr/VRManager.cpp
 )
 
 set(HEADERS
@@ -75,10 +88,17 @@ set(HEADERS
     src/combat/TargetDummy.hpp
     src/combat/TargetLockSystem.hpp
     src/audio/AudioManager.hpp
+    src/vr/VRManager.hpp
     src/math/MathTypes.hpp
 )
 
 add_executable(OverdriveCore ${SOURCES} ${HEADERS})
+
+target_compile_definitions(OverdriveCore PRIVATE
+    NOMINMAX
+    XR_USE_PLATFORM_WIN32
+    XR_USE_GRAPHICS_API_D3D11
+)
 
 target_include_directories(OverdriveCore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -90,6 +110,7 @@ target_include_directories(OverdriveCore PRIVATE
 target_link_libraries(OverdriveCore PRIVATE
     SDL3::SDL3
     Jolt
+    OpenXR::openxr_loader
     d3d11
     dxgi
     d3dcompiler
@@ -102,5 +123,8 @@ add_custom_command(TARGET OverdriveCore POST_BUILD
         $<TARGET_FILE_DIR:OverdriveCore>/assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:SDL3::SDL3-shared>
+        $<TARGET_FILE_DIR:OverdriveCore>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:OpenXR::openxr_loader>
         $<TARGET_FILE_DIR:OverdriveCore>
 )

@@ -967,6 +967,60 @@ namespace Overdrive
         m_context->Draw(static_cast<UINT>(ammoVerts.size()), 0);
     }
 
+    void D3D11Renderer::RenderVREye(
+        const XMMATRIX& view,
+        const XMMATRIX& proj,
+        ID3D11RenderTargetView* rtv,
+        ID3D11DepthStencilView* dsv,
+        const D3D11_VIEWPORT& viewport,
+        const MechController& mech,
+        const WeaponSystem& weapons,
+        const std::vector<TargetDummy>& targets,
+        const TargetLockSystem& lockSystem,
+        bool isLeftEye)
+    {
+        if (!rtv || !dsv) return;
+
+        // Clear VR eye target
+        const float clearColor[4] = { 0.06f, 0.07f, 0.10f, 1.0f };
+        m_context->ClearRenderTargetView(rtv, clearColor);
+        m_context->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+        m_context->RSSetViewports(1, &viewport);
+        m_context->RSSetState(m_rasterizerState.Get());
+        m_context->OMSetRenderTargets(1, &rtv, dsv);
+        m_context->OMSetDepthStencilState(m_depthStencilState.Get(), 0);
+
+        // 1. Render Grid Floor & Hangar Walls
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = XMMatrixIdentity();
+            cb->view = view;
+            cb->projection = proj;
+            cb->customParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f); // Emissive grid
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
+        m_context->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        m_context->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+        m_context->PSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        m_context->IASetInputLayout(m_inputLayout.Get());
+
+        m_gridFloor.Render(m_context.Get());
+
+        // 2. Render Target Dummies
+        RenderTargetDummies(targets, view, proj);
+
+        // 3. Render Mech (VR is always first-person cockpit, so isFPV=true draws only arms/weapons)
+        RenderMech(mech, view, proj, true);
+
+        // 4. Render Projectiles
+        RenderProjectiles(weapons, view, proj);
+    }
+
     void D3D11Renderer::EndFrame()
     {
         m_swapChain->Present(1, 0);
