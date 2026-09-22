@@ -309,19 +309,17 @@ int main(int argc, char* argv[])
         }
 
         // 10. Render Frame (Stereo VR if HMD active, and Desktop window mirror)
-        if (vrManager->IsAvailable() && vrManager->IsSessionRunning())
+        bool vrActive = (vrManager->IsAvailable() && vrManager->IsSessionRunning());
+        if (vrActive)
         {
-            if (vrManager->BeginFrame(mech))
-            {
-                vrManager->RenderStereo(renderer.get(), mech, weapons, targets, targetLock);
-                vrManager->EndFrame();
-            }
+            vrManager->RenderFrame(renderer.get(), mech, weapons, targets, targetLock);
         }
 
         // Render to Desktop Window (Mirror view)
+        // When VR is active, disable desktop VSync to avoid competing with HMD display refresh
         renderer->BeginFrame();
         renderer->RenderScene(camera, mech, weapons, targets, targetLock);
-        renderer->EndFrame();
+        renderer->EndFrame(!vrActive);
     }
 
     // Cleanup

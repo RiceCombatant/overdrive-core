@@ -61,27 +61,25 @@ namespace Overdrive
         // Poll OpenXR events (session state transitions, focus, pause)
         void PollEvents();
 
-        // Frame cycle
-        bool BeginFrame(const MechController& mech);
-        void RenderStereo(
+        // Frame cycle: handles xrWaitFrame, xrBeginFrame, eye rendering, and xrEndFrame atomically
+        bool RenderFrame(
             D3D11Renderer* renderer,
             const MechController& mech,
             const WeaponSystem& weapons,
             const std::vector<TargetDummy>& targets,
             const TargetLockSystem& lockSystem
         );
-        void EndFrame();
 
         // Eye matrices (world space view & projection for left/right eye)
         XMMATRIX GetEyeView(int eye) const { return m_eyeView[eye]; }
         XMMATRIX GetEyeProj(int eye) const { return m_eyeProj[eye]; }
-        ID3D11ShaderResourceView* GetMirrorSRV() const { return m_mirrorSRV.Get(); }
 
     private:
         bool CreateInstance();
         bool GetSystem();
         bool CreateSession(ID3D11Device* device);
         bool CreateSwapchains(ID3D11Device* device);
+        DXGI_FORMAT SelectSwapchainFormat(const std::vector<int64_t>& runtimeFormats);
 
         XMMATRIX CreateProjectionFromFov(const XrFovf& fov, float nearZ = 0.05f, float farZ = 1000.0f);
 

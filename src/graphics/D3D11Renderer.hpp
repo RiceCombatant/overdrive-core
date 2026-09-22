@@ -33,7 +33,7 @@ namespace Overdrive
         bool Initialize(HWND hwnd, int width, int height);
         void Resize(int width, int height);
         void BeginFrame();
-        void EndFrame();
+        void EndFrame(bool vsync = true);
 
         void RenderScene(
             const Camera& camera,

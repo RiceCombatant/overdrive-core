@@ -1021,8 +1021,8 @@ namespace Overdrive
         RenderProjectiles(weapons, view, proj);
     }
 
-    void D3D11Renderer::EndFrame()
+    void D3D11Renderer::EndFrame(bool vsync)
     {
-        m_swapChain->Present(1, 0);
+        m_swapChain->Present(vsync ? 1 : 0, 0);
     }
 }

@@ -189,6 +189,29 @@ namespace Overdrive
         return (res == XR_SUCCESS);
     }
 
+    DXGI_FORMAT VRManager::SelectSwapchainFormat(const std::vector<int64_t>& runtimeFormats)
+    {
+        const DXGI_FORMAT preferredFormats[] = {
+            DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+            DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            DXGI_FORMAT_B8G8R8A8_UNORM
+        };
+
+        for (auto preferred : preferredFormats)
+        {
+            for (auto runtimeFormat : runtimeFormats)
+            {
+                if (runtimeFormat == static_cast<int64_t>(preferred))
+                {
+                    return preferred;
+                }
+            }
+        }
+
+        return DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
+
     bool VRManager::CreateSwapchains(ID3D11Device* device)
     {
         uint32_t viewCount = 0;
@@ -200,6 +223,15 @@ namespace Overdrive
 
         m_views.resize(viewCount, { XR_TYPE_VIEW });
 
+        // Enumerate swapchain formats supported by runtime
+        uint32_t formatCount = 0;
+        xrEnumerateSwapchainFormats(m_session, 0, &formatCount, nullptr);
+        std::vector<int64_t> formats(formatCount);
+        xrEnumerateSwapchainFormats(m_session, formatCount, &formatCount, formats.data());
+
+        DXGI_FORMAT colorFormat = SelectSwapchainFormat(formats);
+        std::cout << "[VR] Selected Swapchain Color Format: " << colorFormat << std::endl;
+
         for (int i = 0; i < 2; ++i)
         {
             auto& eye = m_eyes[i];
@@ -207,11 +239,11 @@ namespace Overdrive
             eye.height = m_configViews[i].recommendedImageRectHeight;
 
             std::cout << "[VR] Eye " << (i == 0 ? "Left" : "Right")
-                      << " Recommended Resolution: " << eye.width << "x" << eye.height << std::endl;
+                      << " Resolution: " << eye.width << "x" << eye.height << std::endl;
 
             XrSwapchainCreateInfo scInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
             scInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
-            scInfo.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            scInfo.format = colorFormat;
             scInfo.sampleCount = 1;
             scInfo.width = eye.width;
             scInfo.height = eye.height;
@@ -232,7 +264,7 @@ namespace Overdrive
             for (uint32_t j = 0; j < imageCount; ++j)
             {
                 D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-                rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                rtvDesc.Format = colorFormat;
                 rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 
                 HRESULT hr = device->CreateRenderTargetView(eye.colorImages[j].texture, &rtvDesc, eye.rtvs[j].GetAddressOf());
@@ -325,141 +357,130 @@ namespace Overdrive
         return mat;
     }
 
-    bool VRManager::BeginFrame(const MechController& mech)
-    {
-        if (!m_isAvailable || !m_isSessionRunning) return false;
-
-        XrFrameWaitInfo waitInfo = { XR_TYPE_FRAME_WAIT_INFO };
-        XrResult res = xrWaitFrame(m_session, &waitInfo, &m_frameState);
-        if (res != XR_SUCCESS) return false;
-
-        XrFrameBeginInfo beginInfo = { XR_TYPE_FRAME_BEGIN_INFO };
-        res = xrBeginFrame(m_session, &beginInfo);
-        if (res != XR_SUCCESS) return false;
-
-        if (!m_frameState.shouldRender) return false;
-
-        // Locate Views (6DoF Head tracking for Left and Right Eye)
-        XrViewState viewState = { XR_TYPE_VIEW_STATE };
-        XrViewLocateInfo locateInfo = { XR_TYPE_VIEW_LOCATE_INFO };
-        locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-        locateInfo.displayTime = m_frameState.predictedDisplayTime;
-        locateInfo.space = m_appSpace;
-
-        uint32_t viewCount = 2;
-        res = xrLocateViews(m_session, &locateInfo, &viewState, 2, &viewCount, m_views.data());
-        if (res != XR_SUCCESS || viewCount < 2) return false;
-
-        // Base mech cockpit head position and Yaw
-        XMFLOAT3 cockpitPos = mech.GetCockpitHeadPosition();
-        float mechYaw = mech.GetYaw();
-        XMVECTOR quatMechYaw = XMQuaternionRotationRollPitchYaw(0.0f, mechYaw, 0.0f);
-        XMMATRIX rotMechY = XMMatrixRotationY(mechYaw);
-
-        for (int i = 0; i < 2; ++i)
-        {
-            // Acquire swapchain image for this eye
-            XrSwapchainImageAcquireInfo acqInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-            xrAcquireSwapchainImage(m_eyes[i].swapchain, &acqInfo, &m_currentImageIndices[i]);
-
-            XrSwapchainImageWaitInfo waitImageInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-            waitImageInfo.timeout = XR_INFINITE_DURATION;
-            xrWaitSwapchainImage(m_eyes[i].swapchain, &waitImageInfo);
-
-            // Compute World-Space Eye Transform
-            // Invert OpenXR Z to match DirectX left-handed coordinate convention
-            XrPosef eyePose = m_views[i].pose;
-            XMVECTOR hmdLocalPos = XMVectorSet(eyePose.position.x, eyePose.position.y, -eyePose.position.z, 0.0f);
-            XMVECTOR hmdLocalRot = XMVectorSet(-eyePose.orientation.x, -eyePose.orientation.y, eyePose.orientation.z, eyePose.orientation.w);
-
-            // Compose with Mech world position and Yaw
-            XMVECTOR eyeWorldPos = XMVector3TransformCoord(hmdLocalPos, rotMechY) + XMLoadFloat3(&cockpitPos);
-            XMVECTOR eyeWorldRot = XMQuaternionMultiply(hmdLocalRot, quatMechYaw);
-
-            // Calculate View Matrix
-            XMMATRIX worldMatrix = XMMatrixRotationQuaternion(eyeWorldRot) * XMMatrixTranslationFromVector(eyeWorldPos);
-            m_eyeView[i] = XMMatrixInverse(nullptr, worldMatrix);
-
-            // Calculate Projection Matrix from Eye FOV
-            m_eyeProj[i] = CreateProjectionFromFov(m_views[i].fov, 0.05f, 1000.0f);
-        }
-
-        return true;
-    }
-
-    void VRManager::RenderStereo(
+    bool VRManager::RenderFrame(
         D3D11Renderer* renderer,
         const MechController& mech,
         const WeaponSystem& weapons,
         const std::vector<TargetDummy>& targets,
         const TargetLockSystem& lockSystem)
     {
-        if (!m_isAvailable || !m_isSessionRunning || !renderer) return;
+        if (!m_isAvailable || !m_isSessionRunning || !renderer) return false;
 
-        for (int i = 0; i < 2; ++i)
-        {
-            auto& eye = m_eyes[i];
-            ID3D11RenderTargetView* rtv = eye.rtvs[m_currentImageIndices[i]].Get();
-            ID3D11DepthStencilView* dsv = eye.dsv.Get();
+        XrFrameWaitInfo waitInfo = { XR_TYPE_FRAME_WAIT_INFO };
+        XrFrameState frameState = { XR_TYPE_FRAME_STATE };
+        XrResult res = xrWaitFrame(m_session, &waitInfo, &frameState);
+        if (res != XR_SUCCESS) return false;
 
-            renderer->RenderVREye(
-                m_eyeView[i],
-                m_eyeProj[i],
-                rtv,
-                dsv,
-                eye.viewport,
-                mech,
-                weapons,
-                targets,
-                lockSystem,
-                (i == 0) // isLeftEye
-            );
-        }
-    }
+        XrFrameBeginInfo beginInfo = { XR_TYPE_FRAME_BEGIN_INFO };
+        res = xrBeginFrame(m_session, &beginInfo);
+        if (res != XR_SUCCESS) return false;
 
-    void VRManager::EndFrame()
-    {
-        if (!m_isAvailable || !m_isSessionRunning) return;
-
-        for (int i = 0; i < 2; ++i)
-        {
-            XrSwapchainImageReleaseInfo relInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-            xrReleaseSwapchainImage(m_eyes[i].swapchain, &relInfo);
-        }
-
+        bool rendered = false;
+        XrCompositionLayerProjection projLayer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView projViews[2] = {
             { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW },
             { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }
         };
 
-        for (int i = 0; i < 2; ++i)
+        if (frameState.shouldRender == XR_TRUE)
         {
-            projViews[i].pose = m_views[i].pose;
-            projViews[i].fov  = m_views[i].fov;
-            projViews[i].subImage.swapchain = m_eyes[i].swapchain;
-            projViews[i].subImage.imageRect.offset = { 0, 0 };
-            projViews[i].subImage.imageRect.extent = {
-                static_cast<int32_t>(m_eyes[i].width),
-                static_cast<int32_t>(m_eyes[i].height)
-            };
-            projViews[i].subImage.imageArrayIndex = 0;
+            XrViewState viewState = { XR_TYPE_VIEW_STATE };
+            XrViewLocateInfo locateInfo = { XR_TYPE_VIEW_LOCATE_INFO };
+            locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+            locateInfo.displayTime = frameState.predictedDisplayTime;
+            locateInfo.space = m_appSpace;
+
+            uint32_t viewCount = 2;
+            res = xrLocateViews(m_session, &locateInfo, &viewState, 2, &viewCount, m_views.data());
+
+            bool trackingValid = (res == XR_SUCCESS && viewCount >= 2 &&
+                (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
+                (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0);
+
+            if (trackingValid)
+            {
+                XMFLOAT3 cockpitPos = mech.GetCockpitHeadPosition();
+                float mechYaw = mech.GetYaw();
+                XMVECTOR quatMechYaw = XMQuaternionRotationRollPitchYaw(0.0f, mechYaw, 0.0f);
+                XMMATRIX rotMechY = XMMatrixRotationY(mechYaw);
+
+                for (int i = 0; i < 2; ++i)
+                {
+                    auto& eye = m_eyes[i];
+
+                    // 1. Acquire Image
+                    uint32_t imageIndex = 0;
+                    XrSwapchainImageAcquireInfo acqInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+                    res = xrAcquireSwapchainImage(eye.swapchain, &acqInfo, &imageIndex);
+                    if (res != XR_SUCCESS) continue;
+
+                    // 2. Wait for Image
+                    XrSwapchainImageWaitInfo waitImageInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+                    waitImageInfo.timeout = XR_INFINITE_DURATION;
+                    res = xrWaitSwapchainImage(eye.swapchain, &waitImageInfo);
+                    if (res != XR_SUCCESS) continue;
+
+                    // 3. Compute Eye Pose & Matrices
+                    XrPosef eyePose = m_views[i].pose;
+                    XMVECTOR hmdLocalPos = XMVectorSet(eyePose.position.x, eyePose.position.y, -eyePose.position.z, 0.0f);
+                    XMVECTOR hmdLocalRot = XMVectorSet(-eyePose.orientation.x, -eyePose.orientation.y, eyePose.orientation.z, eyePose.orientation.w);
+
+                    XMVECTOR eyeWorldPos = XMVector3TransformCoord(hmdLocalPos, rotMechY) + XMLoadFloat3(&cockpitPos);
+                    XMVECTOR eyeWorldRot = XMQuaternionMultiply(hmdLocalRot, quatMechYaw);
+
+                    XMMATRIX worldMatrix = XMMatrixRotationQuaternion(eyeWorldRot) * XMMatrixTranslationFromVector(eyeWorldPos);
+                    m_eyeView[i] = XMMatrixInverse(nullptr, worldMatrix);
+                    m_eyeProj[i] = CreateProjectionFromFov(m_views[i].fov, 0.05f, 1000.0f);
+
+                    // 4. Render to Eye RTV
+                    renderer->RenderVREye(
+                        m_eyeView[i],
+                        m_eyeProj[i],
+                        eye.rtvs[imageIndex].Get(),
+                        eye.dsv.Get(),
+                        eye.viewport,
+                        mech,
+                        weapons,
+                        targets,
+                        lockSystem,
+                        (i == 0)
+                    );
+
+                    // 5. Release Image
+                    XrSwapchainImageReleaseInfo relInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+                    xrReleaseSwapchainImage(eye.swapchain, &relInfo);
+
+                    // Setup projection view for layer
+                    projViews[i].pose = m_views[i].pose;
+                    projViews[i].fov  = m_views[i].fov;
+                    projViews[i].subImage.swapchain = eye.swapchain;
+                    projViews[i].subImage.imageRect.offset = { 0, 0 };
+                    projViews[i].subImage.imageRect.extent = {
+                        static_cast<int32_t>(eye.width),
+                        static_cast<int32_t>(eye.height)
+                    };
+                    projViews[i].subImage.imageArrayIndex = 0;
+                }
+
+                projLayer.space = m_appSpace;
+                projLayer.viewCount = 2;
+                projLayer.views = projViews;
+                rendered = true;
+            }
         }
 
-        XrCompositionLayerProjection projLayer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
-        projLayer.space = m_appSpace;
-        projLayer.viewCount = 2;
-        projLayer.views = projViews;
-
+        // ALWAYS call xrEndFrame to guarantee compositor synchronization
         const XrCompositionLayerBaseHeader* layers[] = {
             reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projLayer)
         };
 
         XrFrameEndInfo endInfo = { XR_TYPE_FRAME_END_INFO };
-        endInfo.displayTime = m_frameState.predictedDisplayTime;
+        endInfo.displayTime = frameState.predictedDisplayTime;
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        endInfo.layerCount = 1;
-        endInfo.layers = layers;
+        endInfo.layerCount = rendered ? 1 : 0;
+        endInfo.layers = rendered ? layers : nullptr;
 
         xrEndFrame(m_session, &endInfo);
+        return rendered;
     }
 }
