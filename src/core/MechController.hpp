@@ -15,6 +15,7 @@ namespace Overdrive
     using namespace DirectX;
 
     class PhysicsManager;
+    class AudioManager;
 
     enum class MechState
     {
@@ -44,7 +45,7 @@ namespace Overdrive
         virtual ~MechController() override;
 
         bool InitializePhysics(PhysicsManager* physicsManager);
-        void Update(float deltaTime, const MechInputState& input, PhysicsManager* physicsManager);
+        void Update(float deltaTime, const MechInputState& input, PhysicsManager* physicsManager, AudioManager* audio = nullptr);
 
         // JPH::CharacterContactListener callback to prevent sliding on slopes when stationary
         virtual void OnContactSolve(

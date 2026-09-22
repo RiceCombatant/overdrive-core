@@ -14,6 +14,7 @@ namespace Overdrive
     using namespace DirectX;
 
     class MechController;
+    class AudioManager;
 
     struct LockTargetInfo
     {
@@ -39,7 +40,8 @@ namespace Overdrive
             const Camera& camera,
             MechController& mech,
             const std::vector<TargetDummy>& targets,
-            float mouseDeltaLen);
+            float mouseDeltaLen,
+            AudioManager* audio = nullptr);
 
         const LockTargetInfo& GetCurrentTarget() const { return m_targetInfo; }
         XMFLOAT2 GetInnerReticlePos() const { return m_currentReticleNdc; }
@@ -48,6 +50,7 @@ namespace Overdrive
     private:
         bool m_isHardLockEnabled = false;
         int m_lockedTargetIndex = -1;
+        int m_prevLockedTargetIndex = -1;
 
         LockTargetInfo m_targetInfo;
         XMFLOAT2 m_currentReticleNdc = { 0.0f, 0.0f }; // Smoothly tracked inner reticle

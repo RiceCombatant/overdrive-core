@@ -42,6 +42,15 @@ set(CROSS_COMPILE_ARM OFF CACHE BOOL "" FORCE)
 set(DOUBLE_PRECISION OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(Jolt)
 
+# miniaudio (Single-header audio playback and 3D spatial engine)
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG        0.11.21
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(miniaudio)
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -53,6 +62,7 @@ set(SOURCES
     src/combat/WeaponSystem.cpp
     src/combat/TargetDummy.cpp
     src/combat/TargetLockSystem.cpp
+    src/audio/AudioManager.cpp
 )
 
 set(HEADERS
@@ -64,6 +74,7 @@ set(HEADERS
     src/combat/WeaponSystem.hpp
     src/combat/TargetDummy.hpp
     src/combat/TargetLockSystem.hpp
+    src/audio/AudioManager.hpp
     src/math/MathTypes.hpp
 )
 
@@ -72,6 +83,7 @@ add_executable(OverdriveCore ${SOURCES} ${HEADERS})
 target_include_directories(OverdriveCore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${jolt_SOURCE_DIR}
+    ${miniaudio_SOURCE_DIR}
 )
 
 # Link Libraries

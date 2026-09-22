@@ -1,5 +1,6 @@
-#include "MechController.hpp"
+#include "core/MechController.hpp"
 #include "physics/PhysicsManager.hpp"
+#include "audio/AudioManager.hpp"
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <cmath>
@@ -143,7 +144,7 @@ namespace Overdrive
         return result;
     }
 
-    void MechController::Update(float deltaTime, const MechInputState& input, PhysicsManager* physicsManager)
+    void MechController::Update(float deltaTime, const MechInputState& input, PhysicsManager* physicsManager, AudioManager* audio)
     {
         if (deltaTime <= 0.0f) return;
         if (deltaTime > 0.1f) deltaTime = 0.1f;
@@ -183,6 +184,11 @@ namespace Overdrive
             m_energy -= 220.0f;
             m_qbTimer = c_qbDuration;
             m_enCooldownTimer = 0.45f;
+
+            if (audio)
+            {
+                audio->PlayQuickBoost(m_position);
+            }
 
             float forward = input.moveForward;
             float right   = input.moveRight;
@@ -372,6 +378,15 @@ namespace Overdrive
         {
             float rechargeRate = m_isGrounded ? 450.0f : 120.0f;
             m_energy = std::min(m_maxEnergy, m_energy + rechargeRate * deltaTime);
+        }
+
+        // 10. Update Continuous Thruster Audio
+        if (audio)
+        {
+            float curSpeed = GetCurrentSpeed();
+            float speedRatio = curSpeed / c_boostSpeed;
+            bool isThrusterActive = m_boostOn || m_isAssaultBoost || input.jumpHold || (m_qbTimer > 0.0f);
+            audio->UpdateBoostSound(isThrusterActive, speedRatio, m_position);
         }
     }
 }

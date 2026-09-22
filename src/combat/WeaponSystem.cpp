@@ -2,6 +2,8 @@
 #include "physics/PhysicsManager.hpp"
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include "combat/WeaponSystem.hpp"
+#include "audio/AudioManager.hpp"
 #include <cmath>
 #include <iostream>
 
@@ -11,21 +13,30 @@ namespace Overdrive
     {
     }
 
-    void WeaponSystem::FireRightArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos)
+    void WeaponSystem::FireRightArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos, AudioManager* audio)
     {
-        if (m_rightCooldown > 0.0f || m_rightAmmo <= 0) return;
+        if (m_rightAmmo <= 0 || m_rightCooldown > 0.0f) return;
 
         m_rightCooldown = c_fireRate;
         m_rightAmmo--;
 
-        // Calculate direction towards target
-        float dx = targetPos.x - muzzlePos.x;
-        float dy = targetPos.y - muzzlePos.y;
-        float dz = targetPos.z - muzzlePos.z;
-        float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (len < 0.001f) len = 1.0f;
+        if (audio)
+        {
+            audio->PlayShootRight(muzzlePos);
+        }
 
-        XMFLOAT3 dir = { dx / len, dy / len, dz / len };
+        XMFLOAT3 dir = {
+            targetPos.x - muzzlePos.x,
+            targetPos.y - muzzlePos.y,
+            targetPos.z - muzzlePos.z
+        };
+        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (len > 0.001f)
+        {
+            dir.x /= len;
+            dir.y /= len;
+            dir.z /= len;
+        }
 
         Projectile p;
         p.position     = muzzlePos;
@@ -33,25 +44,35 @@ namespace Overdrive
         p.velocity     = { dir.x * c_projectileSpeed, dir.y * c_projectileSpeed, dir.z * c_projectileSpeed };
         p.lifetime     = 2.0f;
         p.damage       = 120.0f;
-        p.color        = { 1.0f, 0.55f, 0.15f, 1.0f }; // High-energy Orange/Gold tracer
+        p.color        = { 1.0f, 0.55f, 0.15f, 1.0f }; // Kinetic Orange tracer
 
         m_projectiles.push_back(p);
     }
 
-    void WeaponSystem::FireLeftArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos)
+    void WeaponSystem::FireLeftArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos, AudioManager* audio)
     {
-        if (m_leftCooldown > 0.0f || m_leftAmmo <= 0) return;
+        if (m_leftAmmo <= 0 || m_leftCooldown > 0.0f) return;
 
         m_leftCooldown = c_fireRate;
         m_leftAmmo--;
 
-        float dx = targetPos.x - muzzlePos.x;
-        float dy = targetPos.y - muzzlePos.y;
-        float dz = targetPos.z - muzzlePos.z;
-        float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (len < 0.001f) len = 1.0f;
+        if (audio)
+        {
+            audio->PlayShootLeft(muzzlePos);
+        }
 
-        XMFLOAT3 dir = { dx / len, dy / len, dz / len };
+        XMFLOAT3 dir = {
+            targetPos.x - muzzlePos.x,
+            targetPos.y - muzzlePos.y,
+            targetPos.z - muzzlePos.z
+        };
+        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (len > 0.001f)
+        {
+            dir.x /= len;
+            dir.y /= len;
+            dir.z /= len;
+        }
 
         Projectile p;
         p.position     = muzzlePos;
@@ -64,7 +85,7 @@ namespace Overdrive
         m_projectiles.push_back(p);
     }
 
-    void WeaponSystem::Update(float deltaTime, PhysicsManager* physicsManager, std::vector<TargetDummy>& targets)
+    void WeaponSystem::Update(float deltaTime, PhysicsManager* physicsManager, std::vector<TargetDummy>& targets, AudioManager* audio)
     {
         if (m_rightCooldown > 0.0f) m_rightCooldown -= deltaTime;
         if (m_leftCooldown  > 0.0f) m_leftCooldown  -= deltaTime;
@@ -99,6 +120,7 @@ namespace Overdrive
                 if (physicsSystem->GetNarrowPhaseQuery().CastRay(ray, hitResult))
                 {
                     hasHit = true;
+                    bool targetDestroyed = false;
 
                     // Check if hit one of our target dummies
                     for (auto& target : targets)
@@ -106,8 +128,17 @@ namespace Overdrive
                         if (!target.IsDestroyed() && target.GetBodyID() == hitResult.mBodyID)
                         {
                             target.TakeDamage(it->damage);
+                            if (target.IsDestroyed())
+                            {
+                                targetDestroyed = true;
+                            }
                             break;
                         }
+                    }
+
+                    if (audio)
+                    {
+                        audio->PlayExplosion(it->position, targetDestroyed ? 1.25f : 0.85f);
                     }
                 }
             }

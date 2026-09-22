@@ -11,6 +11,7 @@ namespace Overdrive
     using namespace DirectX;
 
     class PhysicsManager;
+    class AudioManager;
 
     struct Projectile
     {
@@ -27,10 +28,10 @@ namespace Overdrive
     public:
         WeaponSystem();
 
-        void FireRightArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos);
-        void FireLeftArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos);
+        void FireRightArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos, AudioManager* audio = nullptr);
+        void FireLeftArm(const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos, AudioManager* audio = nullptr);
 
-        void Update(float deltaTime, PhysicsManager* physicsManager, std::vector<TargetDummy>& targets);
+        void Update(float deltaTime, PhysicsManager* physicsManager, std::vector<TargetDummy>& targets, AudioManager* audio = nullptr);
 
         const std::vector<Projectile>& GetProjectiles() const { return m_projectiles; }
 

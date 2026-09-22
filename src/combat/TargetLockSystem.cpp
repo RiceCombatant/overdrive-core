@@ -1,5 +1,6 @@
 #include "combat/TargetLockSystem.hpp"
 #include "core/MechController.hpp"
+#include "audio/AudioManager.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -54,7 +55,8 @@ namespace Overdrive
         const Camera& camera,
         MechController& mech,
         const std::vector<TargetDummy>& targets,
-        float mouseDeltaLen)
+        float mouseDeltaLen,
+        AudioManager* audio)
     {
         if (deltaTime <= 0.0f) return;
 
@@ -138,6 +140,12 @@ namespace Overdrive
         // 3. Update Lock Target state
         if (bestIdx >= 0)
         {
+            if (audio && bestIdx != m_prevLockedTargetIndex)
+            {
+                audio->PlayLockOn();
+            }
+            m_prevLockedTargetIndex = bestIdx;
+
             m_targetInfo.hasTarget = true;
             m_targetInfo.targetIndex = bestIdx;
             m_targetInfo.worldPos = bestWorldPos;
@@ -177,6 +185,7 @@ namespace Overdrive
             {
                 m_lockedTargetIndex = -1;
             }
+            m_prevLockedTargetIndex = -1;
         }
     }
 

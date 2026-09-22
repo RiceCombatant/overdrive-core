@@ -10,6 +10,7 @@
 #include "combat/WeaponSystem.hpp"
 #include "combat/TargetDummy.hpp"
 #include "combat/TargetLockSystem.hpp"
+#include "audio/AudioManager.hpp"
 
 using namespace DirectX;
 
@@ -119,6 +120,8 @@ int main(int argc, char* argv[])
     std::cout << "========================================================" << std::endl;
 
     Overdrive::TargetLockSystem targetLock;
+    Overdrive::AudioManager audioManager;
+    audioManager.Initialize();
 
     bool running = true;
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -259,26 +262,34 @@ int main(int argc, char* argv[])
 
         // 5. Update Physics Simulation & Mech
         physics->Update(deltaTime);
-        mech.Update(deltaTime, input, physics.get());
+        mech.Update(deltaTime, input, physics.get(), &audioManager);
         camera.Update(deltaTime, mech);
 
-        // 6. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock)
-        float mouseDeltaLen = std::sqrt(input.yawDelta * input.yawDelta + input.pitchDelta * input.pitchDelta);
-        targetLock.Update(deltaTime, camera, mech, targets, mouseDeltaLen);
+        // 6. Update 3D Audio Listener (Camera eye position and forward direction)
+        float sinY = std::sin(mech.GetYaw());
+        float cosY = std::cos(mech.GetYaw());
+        float sinP = std::sin(mech.GetPitch());
+        float cosP = std::cos(mech.GetPitch());
+        XMFLOAT3 camForward = { sinY * cosP, -sinP, cosY * cosP };
+        audioManager.UpdateListener(camera.GetEyePosition(), camForward, XMFLOAT3(0.0f, 1.0f, 0.0f));
 
-        // 7. Process Shooting (TargetLock aim target if locked, otherwise camera look target)
+        // 7. Update Target Lock System (FCS Soft-Lock & Target Assist Hard-Lock)
+        float mouseDeltaLen = std::sqrt(input.yawDelta * input.yawDelta + input.pitchDelta * input.pitchDelta);
+        targetLock.Update(deltaTime, camera, mech, targets, mouseDeltaLen, &audioManager);
+
+        // 8. Process Shooting (TargetLock aim target if locked, otherwise camera look target)
         XMFLOAT3 aimTarget = targetLock.GetAimWorldTarget(camera);
         if (fireRightRequested)
         {
-            weapons.FireRightArm(mech.GetRightMuzzlePosition(), aimTarget);
+            weapons.FireRightArm(mech.GetRightMuzzlePosition(), aimTarget, &audioManager);
         }
         if (fireLeftRequested)
         {
-            weapons.FireLeftArm(mech.GetLeftMuzzlePosition(), aimTarget);
+            weapons.FireLeftArm(mech.GetLeftMuzzlePosition(), aimTarget, &audioManager);
         }
 
-        // 8. Update Weapons, Projectiles & Targets
-        weapons.Update(deltaTime, physics.get(), targets);
+        // 9. Update Weapons, Projectiles & Targets
+        weapons.Update(deltaTime, physics.get(), targets, &audioManager);
         for (auto& target : targets)
         {
             target.Update(deltaTime, physics.get());
