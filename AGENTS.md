@@ -377,6 +377,21 @@
           - ミニレーダーへの高低差付き敵プロット、画面外Chevron矢印（`>`）インジケーター対応。
           - OpenXR PCVR（Meta Quest 3S等）での両眼立体レンダリングおよびキャノピーHUDへの完全連動。
 
+    26. **ゲーム内完結 Tailscale マルチプレイ ＆ DIRECT IP CONNECT 画面 (`src/network/NetworkManager.cpp`, `src/graphics/D3D11Renderer.cpp`, `src/vr/VRManager.cpp`, `src/main.cpp`)**
+        - **外部バッチや設定ファイル手動編集の完全撤廃**:
+          - 従来の黒いコマンドプロンプトや `network.ini` の手動書き換えを一切排除し、DirectX 11のサイバーUIゲーム画面内だけで接続・ホストが完結する完全スタンドアローンフローを実現。
+        - **Tailscale IPv4 自動検出 ＆ ワンキークリップボード連携**:
+          - WindowsネットワークAPI（`GetAdaptersAddresses`）により、PC上の Tailscale 仮想アダプター（`100.x.x.x`）やローカルLAN IPを瞬時に自動検出。
+          - ホスト待機中や画面上に「`YOUR TAILSCALE IP: 100.xx.xx.xx:7777`」を分かりやすく表示。
+          - ホスト中または接続画面で `[C]` キー（またはゲームパッド `[Y]`）を押すだけで、自分のTailscale IPが即座にクリップボードへコピーされ、友達にチャット等でそのまま貼り付けて教えることが可能。
+        - **DIRECT IP CONNECT 画面（ゲーム内IP入力・接続UI）**:
+          - メインメニューの `[MULTIPLAYER (CONNECT)]` 選択時に、ゲーム内専用GUI画面へシームレス遷移。
+          - **ワンタッチペースト**: 友達から送られてきたIPを **`Ctrl + V`**（またはゲームパッド `[X]`）で一発貼り付け可能（数字とドットのみを自動サニタイズ）。
+          - **直接タイピング**: テンキーおよび数字キー、ドット、Backspaceによる直感的な直接編集と点滅カーソル表示。
+          - **自動保存・次回ワンクリック接続**: 入力したIPは `network.ini` へ自動保存され、次回起動時も前回の接続先が維持されるため `Enter`（またはゲームパッド `[A]`）を押すだけで即接続可能。
+        - **VR（OpenXR）完全対応**:
+          - コックピット前面2.0mの3Dホログラム空間に接続UIを立体投影し、VR HMD（Meta Quest 3S等）を装着したままでも完全操作可能。
+
 ---
 
 ## 3. 次のロードマップ
