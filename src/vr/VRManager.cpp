@@ -668,4 +668,118 @@ namespace Overdrive
         xrEndFrame(m_session, &endInfo);
         return rendered;
     }
+
+    bool VRManager::RenderDirectConnectFrame(
+        D3D11Renderer* renderer,
+        const std::string& inputIp,
+        const std::string& myTailscaleIp,
+        uint16_t port,
+        float animTime,
+        const std::string& notificationMessage,
+        const Camera& camera,
+        const MechController& mech
+    )
+    {
+        if (!m_isAvailable || !m_isSessionRunning || !renderer) return false;
+
+        XrFrameWaitInfo waitInfo = { XR_TYPE_FRAME_WAIT_INFO };
+        XrFrameState frameState = { XR_TYPE_FRAME_STATE };
+        if (xrWaitFrame(m_session, &waitInfo, &frameState) != XR_SUCCESS) return false;
+
+        XrFrameBeginInfo beginInfo = { XR_TYPE_FRAME_BEGIN_INFO };
+        if (xrBeginFrame(m_session, &beginInfo) != XR_SUCCESS) return false;
+
+        bool rendered = false;
+        XrCompositionLayerProjection projLayer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+        XrCompositionLayerProjectionView projViews[2] = {
+            { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW },
+            { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }
+        };
+
+        if (frameState.shouldRender == XR_TRUE)
+        {
+            XrViewState viewState = { XR_TYPE_VIEW_STATE };
+            uint32_t viewCountOutput = 2;
+            XrViewLocateInfo locateInfo = { XR_TYPE_VIEW_LOCATE_INFO };
+            locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+            locateInfo.displayTime = frameState.predictedDisplayTime;
+            locateInfo.space = m_appSpace;
+
+            XrResult res = xrLocateViews(m_session, &locateInfo, &viewState, 2, &viewCountOutput, m_views.data());
+            if (res == XR_SUCCESS && (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
+            {
+                for (int i = 0; i < 2; ++i)
+                {
+                    VREyeData& eye = m_eyes[i];
+
+                    XrSwapchainImageAcquireInfo acqInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+                    uint32_t imageIndex = 0;
+                    if (xrAcquireSwapchainImage(eye.swapchain, &acqInfo, &imageIndex) != XR_SUCCESS) continue;
+
+                    XrSwapchainImageWaitInfo waitImageInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+                    waitImageInfo.timeout = XR_INFINITE_DURATION;
+                    if (xrWaitSwapchainImage(eye.swapchain, &waitImageInfo) != XR_SUCCESS) continue;
+
+                    XrPosef eyePose = m_views[i].pose;
+                    XMVECTOR hmdLocalPos = XMVectorSet(eyePose.position.x, eyePose.position.y, -eyePose.position.z, 0.0f);
+                    XMVECTOR hmdLocalRot = XMVectorSet(-eyePose.orientation.x, -eyePose.orientation.y, eyePose.orientation.z, eyePose.orientation.w);
+
+                    XMFLOAT3 camPos = camera.GetEyePosition();
+                    XMVECTOR eyeWorldPos = hmdLocalPos + XMLoadFloat3(&camPos);
+                    XMMATRIX worldMatrix = XMMatrixRotationQuaternion(hmdLocalRot) * XMMatrixTranslationFromVector(eyeWorldPos);
+                    m_eyeView[i] = XMMatrixInverse(nullptr, worldMatrix);
+                    m_eyeProj[i] = CreateProjectionFromFov(m_views[i].fov, 0.05f, 1000.0f);
+
+                    ID3D11RenderTargetView* rtv = eye.rtvs[imageIndex].Get();
+                    ID3D11DepthStencilView* dsv = eye.dsv.Get();
+                    auto* context = renderer->GetContext();
+
+                    const float clearColor[4] = { 0.015f, 0.02f, 0.035f, 1.0f };
+                    context->ClearRenderTargetView(rtv, clearColor);
+                    context->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+                    context->OMSetRenderTargets(1, &rtv, dsv);
+                    context->RSSetViewports(1, &eye.viewport);
+
+                    renderer->RenderVRDirectConnectMenu(
+                        inputIp,
+                        myTailscaleIp,
+                        port,
+                        animTime,
+                        notificationMessage,
+                        m_eyeView[i],
+                        m_eyeProj[i]
+                    );
+
+                    XrSwapchainImageReleaseInfo relInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+                    xrReleaseSwapchainImage(eye.swapchain, &relInfo);
+
+                    projViews[i].pose = m_views[i].pose;
+                    projViews[i].fov  = m_views[i].fov;
+                    projViews[i].subImage.swapchain = eye.swapchain;
+                    projViews[i].subImage.imageRect.offset = { 0, 0 };
+                    projViews[i].subImage.imageRect.extent = { static_cast<int32_t>(eye.width), static_cast<int32_t>(eye.height) };
+                    projViews[i].subImage.imageArrayIndex = 0;
+                }
+
+                projLayer.space = m_appSpace;
+                projLayer.viewCount = 2;
+                projLayer.views = projViews;
+                rendered = true;
+            }
+        }
+
+        const XrCompositionLayerBaseHeader* layers[] = {
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projLayer)
+        };
+
+        XrFrameEndInfo endInfo = { XR_TYPE_FRAME_END_INFO };
+        endInfo.displayTime = frameState.predictedDisplayTime;
+        endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        endInfo.layerCount = rendered ? 1 : 0;
+        endInfo.layers = rendered ? layers : nullptr;
+
+        xrEndFrame(m_session, &endInfo);
+        return rendered;
+    }
 }
+

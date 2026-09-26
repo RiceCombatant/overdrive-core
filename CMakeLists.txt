@@ -140,6 +140,7 @@ target_link_libraries(OverdriveCore PRIVATE
     dxgi
     d3dcompiler
     ws2_32
+    iphlpapi
 )
 
 # Copy shaders and assets to output directory

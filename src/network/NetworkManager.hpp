@@ -294,6 +294,12 @@ namespace Overdrive
 
         void InitializeRemotePhysics(PhysicsManager* physics);
 
+        // Static network configuration & adapter helpers
+        static std::vector<std::pair<std::string, std::string>> GetLocalIPv4Addresses();
+        static std::string GetPreferredTailscaleOrLocalIP();
+        static bool SaveNetworkConfig(const std::string& filepath, const std::string& mode, const std::string& ip, uint16_t port);
+        static bool LoadNetworkConfig(const std::string& filepath, std::string& mode, std::string& ip, uint16_t& port);
+
     private:
         void ProcessIncomingPackets(WeaponSystem* weapons, AudioManager* audio, PhysicsManager* physics, MechController* localMech);
         void SendStatePacket(

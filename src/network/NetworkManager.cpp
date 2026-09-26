@@ -4,8 +4,11 @@
 #include "combat/WeaponSystem.hpp"
 #include "core/MechController.hpp"
 #include <iostream>
+#include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace Overdrive
 {
@@ -991,5 +994,129 @@ namespace Overdrive
                 }
             }
         }
+    }
+
+    // =========================================================================
+    // Static Network Utilities & Tailscale IP Discovery
+    // =========================================================================
+    std::vector<std::pair<std::string, std::string>> NetworkManager::GetLocalIPv4Addresses()
+    {
+        std::vector<std::pair<std::string, std::string>> results;
+        ULONG outBufLen = 15000;
+        std::vector<BYTE> buffer(outBufLen);
+        PIP_ADAPTER_ADDRESSES pAddresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+
+        ULONG flags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+        DWORD ret = GetAdaptersAddresses(AF_INET, flags, nullptr, pAddresses, &outBufLen);
+        if (ret == ERROR_BUFFER_OVERFLOW)
+        {
+            buffer.resize(outBufLen);
+            pAddresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+            ret = GetAdaptersAddresses(AF_INET, flags, nullptr, pAddresses, &outBufLen);
+        }
+
+        if (ret == NO_ERROR)
+        {
+            for (PIP_ADAPTER_ADDRESSES pCurr = pAddresses; pCurr != nullptr; pCurr = pCurr->Next)
+            {
+                if (pCurr->OperStatus != IfOperStatusUp) continue;
+
+                char friendlyName[256] = {};
+                WideCharToMultiByte(CP_UTF8, 0, pCurr->FriendlyName, -1, friendlyName, sizeof(friendlyName), nullptr, nullptr);
+                std::string name = friendlyName;
+
+                for (PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurr->FirstUnicastAddress; pUnicast != nullptr; pUnicast = pUnicast->Next)
+                {
+                    if (pUnicast->Address.lpSockaddr->sa_family == AF_INET)
+                    {
+                        sockaddr_in* sa_in = reinterpret_cast<sockaddr_in*>(pUnicast->Address.lpSockaddr);
+                        char ipStr[INET_ADDRSTRLEN] = {};
+                        inet_ntop(AF_INET, &(sa_in->sin_addr), ipStr, sizeof(ipStr));
+                        std::string ip = ipStr;
+                        // Skip loopback and APIPA (169.254.x.x)
+                        if (ip != "127.0.0.1" && !ip.starts_with("169.254."))
+                        {
+                            results.push_back({ name, ip });
+                        }
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    std::string NetworkManager::GetPreferredTailscaleOrLocalIP()
+    {
+        auto addrs = GetLocalIPv4Addresses();
+        // 1. Prioritize Tailscale adapter (name containing "tailscale" or IP starting with "100.")
+        for (const auto& [name, ip] : addrs)
+        {
+            std::string lowerName = name;
+            for (char& c : lowerName) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+            if (lowerName.find("tailscale") != std::string::npos || ip.starts_with("100."))
+            {
+                return ip;
+            }
+        }
+        // 2. Fall back to standard local private LAN (192.168.x.x or 10.x.x.x)
+        for (const auto& [name, ip] : addrs)
+        {
+            if (ip.starts_with("192.168.") || ip.starts_with("10."))
+            {
+                return ip;
+            }
+        }
+        // 3. Fall back to any discovered valid IP
+        if (!addrs.empty())
+        {
+            return addrs[0].second;
+        }
+        return "127.0.0.1";
+    }
+
+    bool NetworkManager::SaveNetworkConfig(const std::string& filepath, const std::string& mode, const std::string& ip, uint16_t port)
+    {
+        std::ofstream iniFile(filepath, std::ios::trunc);
+        if (!iniFile.is_open()) return false;
+
+        iniFile << "# Overdrive Core Network Configuration" << std::endl;
+        iniFile << "# mode: none, host, or client" << std::endl;
+        iniFile << "mode=" << mode << std::endl;
+        iniFile << "ip=" << ip << std::endl;
+        iniFile << "port=" << port << std::endl;
+        return true;
+    }
+
+    bool NetworkManager::LoadNetworkConfig(const std::string& filepath, std::string& mode, std::string& ip, uint16_t& port)
+    {
+        std::ifstream iniFile(filepath);
+        if (!iniFile.is_open()) return false;
+
+        std::string line;
+        auto trim = [](std::string& s) {
+            size_t start = s.find_first_not_of(" \t\r\n");
+            size_t end = s.find_last_not_of(" \t\r\n");
+            if (start == std::string::npos) s.clear();
+            else s = s.substr(start, end - start + 1);
+        };
+
+        while (std::getline(iniFile, line))
+        {
+            size_t eqPos = line.find('=');
+            if (eqPos != std::string::npos)
+            {
+                std::string key = line.substr(0, eqPos);
+                std::string val = line.substr(eqPos + 1);
+                trim(key);
+                trim(val);
+                if (key == "mode") mode = val;
+                else if (key == "ip") ip = val;
+                else if (key == "port" && !val.empty())
+                {
+                    try { port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {}
+                }
+            }
+        }
+        return true;
     }
 }

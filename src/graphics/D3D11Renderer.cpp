@@ -4624,6 +4624,194 @@ namespace Overdrive
         m_context->OMSetDepthStencilState(m_depthStencilState.Get(), 1);
     }
 
+    void D3D11Renderer::RenderDirectConnectMenu(
+        const Camera& camera,
+        const MechController& mech,
+        const std::string& inputIp,
+        const std::string& myTailscaleIp,
+        uint16_t port,
+        float animTime,
+        const std::string& notificationMessage
+    )
+    {
+        float aspect = static_cast<float>(m_width) / static_cast<float>(m_height > 0 ? m_height : 1);
+        float invAspect = 1.0f / aspect;
+        XMMATRIX view = camera.GetViewMatrix();
+        XMMATRIX proj = camera.GetProjectionMatrix(aspect);
+
+        // 1. Render 3D Background: Cyber Grid Floor and Mech
+        m_context->OMSetDepthStencilState(m_depthStencilState.Get(), 0);
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = XMMatrixIdentity();
+            cb->view = view;
+            cb->projection = proj;
+            cb->customParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+        m_gridFloor.RenderFloorOnly(m_context.Get());
+        static WeaponSystem s_defaultWeapons;
+        RenderMech(mech, s_defaultWeapons, nullptr, view, proj, false);
+
+        // 2. Render 2D Cyber UI
+        m_context->OMSetDepthStencilState(m_hudDepthDisabledState.Get(), 0);
+
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = XMMatrixIdentity();
+            cb->view = XMMatrixIdentity();
+            cb->projection = XMMatrixIdentity();
+            cb->customParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        std::vector<Vertex> uiVerts;
+        uiVerts.reserve(4096);
+
+        XMFLOAT4 cyan      = { 0.25f, 0.90f, 1.00f, 0.95f };
+        XMFLOAT4 dimCyan   = { 0.15f, 0.45f, 0.60f, 0.70f };
+        XMFLOAT4 amber     = { 1.00f, 0.78f, 0.18f, 0.95f };
+        XMFLOAT4 white     = { 0.95f, 0.96f, 1.00f, 0.95f };
+        XMFLOAT4 dimText   = { 0.60f, 0.68f, 0.75f, 0.85f };
+        XMFLOAT4 green     = { 0.20f, 0.95f, 0.45f, 0.95f };
+
+        float pulse = 0.75f + 0.25f * std::sin(animTime * 6.5f);
+        XMFLOAT4 activeCol = { 1.00f, 0.82f, 0.18f, pulse };
+
+        auto addLine = [&](float x1, float y1, float x2, float y2, XMFLOAT4 col) {
+            uiVerts.push_back({ { x1, y1, 0.0f }, { 0, 0, 1 }, col });
+            uiVerts.push_back({ { x2, y2, 0.0f }, { 0, 0, 1 }, col });
+        };
+
+        auto addRect = [&](float l, float t, float r, float b, XMFLOAT4 col) {
+            addLine(l, t, r, t, col);
+            addLine(r, t, r, b, col);
+            addLine(r, b, l, b, col);
+            addLine(l, b, l, t, col);
+        };
+
+        // (A) Top Banner & Title Box
+        float tBoxL = -0.72f, tBoxR = 0.72f;
+        float tBoxT = 0.88f,  tBoxB = 0.68f;
+        float cLen = 0.045f;
+        addLine(tBoxL, tBoxT, tBoxL + cLen, tBoxT, cyan);
+        addLine(tBoxL, tBoxT, tBoxL, tBoxT - cLen, cyan);
+        addLine(tBoxR, tBoxT, tBoxR - cLen, tBoxT, cyan);
+        addLine(tBoxR, tBoxT, tBoxR, tBoxT - cLen, cyan);
+        addLine(tBoxL, tBoxB, tBoxL + cLen, tBoxB, cyan);
+        addLine(tBoxL, tBoxB, tBoxL, tBoxB + cLen, cyan);
+        addLine(tBoxR, tBoxB, tBoxR - cLen, tBoxB, cyan);
+        addLine(tBoxR, tBoxB, tBoxR, tBoxB + cLen, cyan);
+
+        std::string title = "DIRECT IP CONNECT";
+        float tCharH = 0.060f;
+        float tCharW = tCharH * invAspect * 0.75f;
+        float tSp = tCharW * 0.40f;
+        float tTotalW = title.length() * (tCharW + tSp);
+        AddStringLines(title, -tTotalW * 0.5f, 0.79f, tCharW, tCharH, tSp, white, uiVerts);
+
+        std::string sub = "TAILSCALE / VPN / LOCAL LAN MULTIPLAYER";
+        float sCharH = 0.022f;
+        float sCharW = sCharH * invAspect * 0.70f;
+        float sSp = sCharW * 0.35f;
+        float sTotalW = sub.length() * (sCharW + sSp);
+        AddStringLines(sub, -sTotalW * 0.5f, 0.715f, sCharW, sCharH, sSp, cyan, uiVerts);
+
+        // (B) Main Center Box: Target Host IP
+        float mBoxL = -0.65f, mBoxR = 0.65f;
+        float mBoxT = 0.48f,  mBoxB = 0.05f;
+        addRect(mBoxL, mBoxT, mBoxR, mBoxB, dimCyan);
+
+        std::string prompt = "ENTER HOST IP ADDRESS (PORT: " + std::to_string(port) + "):";
+        float pCharH = 0.024f;
+        float pCharW = pCharH * invAspect * 0.70f;
+        float pSp = pCharW * 0.35f;
+        AddStringLines(prompt, mBoxL + 0.05f, 0.40f, pCharW, pCharH, pSp, cyan, uiVerts);
+
+        // IP Input Field Box
+        float ipBoxL = mBoxL + 0.05f, ipBoxR = mBoxR - 0.05f;
+        float ipBoxT = 0.32f,         ipBoxB = 0.17f;
+        addRect(ipBoxL, ipBoxT, ipBoxR, ipBoxB, activeCol);
+
+        // Blinking cursor
+        std::string displayIp = inputIp;
+        if (fmod(animTime, 0.8f) < 0.4f)
+        {
+            displayIp += "_";
+        }
+        else
+        {
+            displayIp += " ";
+        }
+
+        float ipCharH = 0.052f;
+        float ipCharW = ipCharH * invAspect * 0.75f;
+        float ipSp = ipCharW * 0.35f;
+        AddStringLines(displayIp, ipBoxL + 0.04f, 0.245f, ipCharW, ipCharH, ipSp, white, uiVerts);
+
+        // Quick Paste & Type Instructions
+        std::string pasteGuide = "[CTRL+V] PASTE FROM CLIPBOARD    [0-9 / .] TYPE    [BACKSPACE] DELETE";
+        float gCharH = 0.019f;
+        float gCharW = gCharH * invAspect * 0.70f;
+        float gSp = gCharW * 0.35f;
+        AddStringLines(pasteGuide, mBoxL + 0.05f, 0.10f, gCharW, gCharH, gSp, amber, uiVerts);
+
+        // (C) Host / Self Info Box
+        float hBoxL = -0.65f, hBoxR = 0.65f;
+        float hBoxT = -0.05f, hBoxB = -0.35f;
+        addRect(hBoxL, hBoxT, hBoxR, hBoxB, dimCyan);
+
+        std::string myIpTitle = "YOUR DETECTED IP (TAILSCALE / LAN):";
+        AddStringLines(myIpTitle, hBoxL + 0.05f, -0.12f, pCharH, pCharH * invAspect * 0.70f, pSp, cyan, uiVerts);
+
+        std::string myIpStr = myTailscaleIp + ":" + std::to_string(port);
+        AddStringLines(myIpStr, hBoxL + 0.05f, -0.20f, 0.038f, 0.038f * invAspect * 0.75f, pSp, green, uiVerts);
+
+        std::string shareHint = "IF YOU HOST, SHARE THIS IP WITH FRIENDS - PRESS [C] TO COPY YOUR IP";
+        AddStringLines(shareHint, hBoxL + 0.05f, -0.29f, 0.019f, 0.019f * invAspect * 0.70f, pSp, dimText, uiVerts);
+
+        // (D) Notification Message Banner (if any)
+        if (!notificationMessage.empty())
+        {
+            float nCharH = 0.024f;
+            float nCharW = nCharH * invAspect * 0.70f;
+            float nSp = nCharW * 0.35f;
+            float nTotalW = notificationMessage.length() * (nCharW + nSp);
+            AddStringLines(notificationMessage, -nTotalW * 0.5f, -0.45f, nCharW, nCharH, nSp, activeCol, uiVerts);
+        }
+
+        // (E) Footer Navigation Guide
+        std::string footer = "[ENTER / A] CONNECT TO BATTLE    [ESC / B] CANCEL & RETURN";
+        float fCharH = 0.024f;
+        float fCharW = fCharH * invAspect * 0.70f;
+        float fSp = fCharW * 0.35f;
+        float fTotalW = footer.length() * (fCharW + fSp);
+        AddStringLines(footer, -fTotalW * 0.5f, -0.75f, fCharW, fCharH, fSp, cyan, uiVerts);
+
+        // Upload and draw UI
+        if (!uiVerts.empty())
+        {
+            D3D11_MAPPED_SUBRESOURCE dynMap;
+            if (SUCCEEDED(m_context->Map(m_dynamicReticleBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &dynMap)))
+            {
+                UINT copyCount = static_cast<UINT>(std::min(uiVerts.size(), size_t(4096)));
+                memcpy(dynMap.pData, uiVerts.data(), sizeof(Vertex) * copyCount);
+                m_context->Unmap(m_dynamicReticleBuffer.Get(), 0);
+
+                UINT stride = sizeof(Vertex);
+                UINT offset = 0;
+                m_context->IASetVertexBuffers(0, 1, m_dynamicReticleBuffer.GetAddressOf(), &stride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->Draw(copyCount, 0);
+            }
+        }
+
+        m_context->OMSetDepthStencilState(m_depthStencilState.Get(), 1);
+    }
+
     void D3D11Renderer::RenderAssembleMenu(
         const Camera& camera,
         const MechController& mech,
@@ -5239,6 +5427,128 @@ namespace Overdrive
             float dTotalW = d.length() * (dCharW + dSp);
             AddStringLines(d, -dTotalW * 0.5f, descY, dCharW, dCharH, dSp, amber, uiVerts);
         }
+
+        // Draw VR UI
+        if (!uiVerts.empty())
+        {
+            D3D11_MAPPED_SUBRESOURCE dynMap;
+            if (SUCCEEDED(m_context->Map(m_dynamicReticleBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &dynMap)))
+            {
+                UINT copyCount = static_cast<UINT>(std::min(uiVerts.size(), size_t(4096)));
+                memcpy(dynMap.pData, uiVerts.data(), sizeof(Vertex) * copyCount);
+                m_context->Unmap(m_dynamicReticleBuffer.Get(), 0);
+
+                UINT stride = sizeof(Vertex);
+                UINT offset = 0;
+                m_context->IASetVertexBuffers(0, 1, m_dynamicReticleBuffer.GetAddressOf(), &stride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->Draw(copyCount, 0);
+            }
+        }
+
+        m_context->OMSetDepthStencilState(m_depthStencilState.Get(), 1);
+    }
+
+    void D3D11Renderer::RenderVRDirectConnectMenu(
+        const std::string& inputIp,
+        const std::string& myTailscaleIp,
+        uint16_t port,
+        float animTime,
+        const std::string& notificationMessage,
+        const XMMATRIX& view,
+        const XMMATRIX& proj
+    )
+    {
+        m_context->OMSetDepthStencilState(m_hudDepthDisabledState.Get(), 0);
+
+        XMMATRIX world = XMMatrixTranslation(0.0f, 0.0f, 2.0f);
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            auto* cb = static_cast<TransformConstantBuffer*>(mapped.pData);
+            cb->world = world;
+            cb->view = view;
+            cb->projection = proj;
+            cb->customParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            m_context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        std::vector<Vertex> uiVerts;
+        uiVerts.reserve(4096);
+
+        XMFLOAT4 cyan    = { 0.25f, 0.90f, 1.00f, 0.95f };
+        XMFLOAT4 dimCyan = { 0.15f, 0.45f, 0.60f, 0.70f };
+        XMFLOAT4 amber   = { 1.00f, 0.78f, 0.18f, 0.95f };
+        XMFLOAT4 white   = { 0.95f, 0.96f, 1.00f, 0.95f };
+        XMFLOAT4 dimText = { 0.60f, 0.68f, 0.75f, 0.85f };
+        XMFLOAT4 green   = { 0.20f, 0.95f, 0.45f, 0.95f };
+
+        float pulse = 0.75f + 0.25f * std::sin(animTime * 6.5f);
+        XMFLOAT4 activeCol = { 1.00f, 0.82f, 0.18f, pulse };
+
+        auto addLine = [&](float x1, float y1, float x2, float y2, XMFLOAT4 col) {
+            uiVerts.push_back({ { x1, y1, 0.0f }, { 0, 0, 1 }, col });
+            uiVerts.push_back({ { x2, y2, 0.0f }, { 0, 0, 1 }, col });
+        };
+
+        auto addRect = [&](float l, float t, float r, float b, XMFLOAT4 col) {
+            addLine(l, t, r, t, col);
+            addLine(r, t, r, b, col);
+            addLine(r, b, l, b, col);
+            addLine(l, b, l, t, col);
+        };
+
+        // Title
+        std::string title = "DIRECT IP CONNECT";
+        float tCharH = 0.055f, tCharW = 0.035f, tSp = 0.012f;
+        float tTotalW = title.length() * (tCharW + tSp);
+        AddStringLines(title, -tTotalW * 0.5f, 0.44f, tCharW, tCharH, tSp, white, uiVerts);
+
+        std::string sub = "TAILSCALE / VPN / LAN";
+        float sCharH = 0.022f, sCharW = 0.014f, sSp = 0.006f;
+        float sTotalW = sub.length() * (sCharW + sSp);
+        AddStringLines(sub, -sTotalW * 0.5f, 0.38f, sCharW, sCharH, sSp, cyan, uiVerts);
+
+        // Center IP Box
+        float boxW = 0.80f;
+        float boxL = -boxW * 0.5f, boxR = boxW * 0.5f;
+        addRect(boxL, 0.32f, boxR, 0.08f, dimCyan);
+
+        std::string prompt = "ENTER HOST IP (PORT: " + std::to_string(port) + "):";
+        AddStringLines(prompt, boxL + 0.04f, 0.27f, sCharW, sCharH, sSp, cyan, uiVerts);
+
+        // Input field
+        addRect(boxL + 0.03f, 0.22f, boxR - 0.03f, 0.11f, activeCol);
+        std::string displayIp = inputIp;
+        if (fmod(animTime, 0.8f) < 0.4f) displayIp += "_";
+        else displayIp += " ";
+        AddStringLines(displayIp, boxL + 0.06f, 0.165f, 0.028f, 0.044f, 0.010f, white, uiVerts);
+
+        // Guide
+        std::string pasteGuide = "[CTRL+V] PASTE IP    [0-9/.] TYPE    [BS] DELETE";
+        AddStringLines(pasteGuide, boxL + 0.04f, 0.04f, 0.011f, 0.017f, 0.005f, amber, uiVerts);
+
+        // Self IP Box
+        addRect(boxL, -0.02f, boxR, -0.22f, dimCyan);
+        std::string myIpTitle = "YOUR DETECTED IP (TAILSCALE / LAN):";
+        AddStringLines(myIpTitle, boxL + 0.04f, -0.07f, sCharW, sCharH, sSp, cyan, uiVerts);
+        std::string myIpStr = myTailscaleIp + ":" + std::to_string(port);
+        AddStringLines(myIpStr, boxL + 0.04f, -0.13f, 0.022f, 0.032f, 0.008f, green, uiVerts);
+        std::string hint = "PRESS [C] TO COPY YOUR IP TO SHARE";
+        AddStringLines(hint, boxL + 0.04f, -0.18f, 0.010f, 0.015f, 0.004f, dimText, uiVerts);
+
+        // Notification
+        if (!notificationMessage.empty())
+        {
+            float nTotalW = notificationMessage.length() * (0.013f + 0.005f);
+            AddStringLines(notificationMessage, -nTotalW * 0.5f, -0.28f, 0.013f, 0.020f, 0.005f, activeCol, uiVerts);
+        }
+
+        // Footer
+        std::string footer = "[ENTER/A] CONNECT    [ESC/B] CANCEL";
+        float fTotalW = footer.length() * (0.014f + 0.006f);
+        AddStringLines(footer, -fTotalW * 0.5f, -0.38f, 0.014f, 0.022f, 0.006f, cyan, uiVerts);
 
         // Draw VR UI
         if (!uiVerts.empty())

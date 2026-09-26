@@ -91,6 +91,18 @@ namespace Overdrive
             const MechController& mech
         );
 
+        bool RenderDirectConnectFrame(
+            D3D11Renderer* renderer,
+            const std::string& inputIp,
+            const std::string& myTailscaleIp,
+            uint16_t port,
+            float animTime,
+            const std::string& notificationMessage,
+            const Camera& camera,
+            const MechController& mech
+        );
+
+
         // Eye matrices (world space view & projection for left/right eye)
         XMMATRIX GetEyeView(int eye) const { return m_eyeView[eye]; }
         XMMATRIX GetEyeProj(int eye) const { return m_eyeProj[eye]; }

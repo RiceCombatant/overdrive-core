@@ -200,31 +200,11 @@ int main(int argc, char* argv[])
     std::string connectIp = "127.0.0.1";
     uint16_t netPort = 7777;
 
-    std::ifstream iniFile("network.ini");
-    if (iniFile.is_open())
-    {
-        std::string line;
-        while (std::getline(iniFile, line))
-        {
-            size_t eqPos = line.find('=');
-            if (eqPos != std::string::npos)
-            {
-                std::string key = line.substr(0, eqPos);
-                std::string val = line.substr(eqPos + 1);
-                auto trim = [](std::string& s) {
-                    size_t start = s.find_first_not_of(" \t\r\n");
-                    size_t end = s.find_last_not_of(" \t\r\n");
-                    if (start == std::string::npos) s.clear();
-                    else s = s.substr(start, end - start + 1);
-                };
-                trim(key);
-                trim(val);
-                if (key == "mode") netModeStr = val;
-                else if (key == "ip") connectIp = val;
-                else if (key == "port") netPort = static_cast<uint16_t>(std::stoi(val));
-            }
-        }
-    }
+    Overdrive::NetworkManager::LoadNetworkConfig("network.ini", netModeStr, connectIp, netPort);
+
+    // Auto-detect Tailscale or local private network IP
+    std::string myDetectedIp = Overdrive::NetworkManager::GetPreferredTailscaleOrLocalIP();
+    std::cout << "[NETWORK] Detected Primary Tailscale/Local IP: " << myDetectedIp << std::endl;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -247,6 +227,7 @@ int main(int argc, char* argv[])
     enum class GameState
     {
         MainMenu,
+        DirectConnect,
         Assemble,
         Playing
     };
@@ -254,6 +235,11 @@ int main(int argc, char* argv[])
     GameState gameState = GameState::MainMenu;
     Overdrive::FrameSystem frameSystem;
     Overdrive::InternalSystem internalSystem;
+
+    // Direct Connect UI states
+    std::string directConnectInputIp = (connectIp != "127.0.0.1" && !connectIp.empty()) ? connectIp : "100.";
+    std::string directConnectNotification = "";
+    float directConnectNotifTimer = 0.0f;
 
     Overdrive::AssembleTab assembleCurrentTab = Overdrive::AssembleTab::Weapons;
     int assembleSlotIndex = 0;
@@ -386,22 +372,25 @@ int main(int argc, char* argv[])
     menu.AddItem(
         "host",
         "MULTIPLAYER (HOST)",
-        "HOST 4-PLAYER BATTLE ON PORT " + std::to_string(netPort),
+        "HOST 4-PLAYER BATTLE | YOUR IP: " + myDetectedIp + ":" + std::to_string(netPort),
         [&]() {
             network.StartHost(netPort);
             mech.Respawn({ 0.0f, 2.0f, -40.0f }, 0.0f);
             gameState = GameState::Playing;
+            renderer->ShowArenaModeBanner("HOST ACTIVE | IP: " + myDetectedIp + " (PRESS [C] TO COPY)", 5.0f);
+            audioManager.PlayMenuConfirm();
         }
     );
 
     menu.AddItem(
         "client",
         "MULTIPLAYER (CONNECT)",
-        "JOIN BATTLE AT " + connectIp + ":" + std::to_string(netPort),
+        "DIRECT IP CONNECT TO TAILSCALE / LAN HOST",
         [&]() {
-            network.StartClient(connectIp, netPort);
-            mech.Respawn({ 0.0f, 2.0f, 40.0f }, 3.14159265f);
-            gameState = GameState::Playing;
+            gameState = GameState::DirectConnect;
+            directConnectNotification = "";
+            directConnectNotifTimer = 0.0f;
+            audioManager.PlayMenuConfirm();
         }
     );
 
@@ -451,6 +440,83 @@ int main(int argc, char* argv[])
                     else if (event.key.scancode == SDL_SCANCODE_ESCAPE)
                     {
                         running = false;
+                    }
+                }
+                else if (gameState == GameState::DirectConnect)
+                {
+                    bool isCtrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
+                    if (event.key.scancode == SDL_SCANCODE_ESCAPE)
+                    {
+                        gameState = GameState::MainMenu;
+                        audioManager.PlayMenuMove();
+                    }
+                    else if (isCtrl && event.key.scancode == SDL_SCANCODE_V)
+                    {
+                        char* clip = SDL_GetClipboardText();
+                        if (clip && strlen(clip) > 0)
+                        {
+                            std::string filtered;
+                            for (const char* p = clip; *p; ++p)
+                            {
+                                if ((*p >= '0' && *p <= '9') || *p == '.')
+                                {
+                                    filtered.push_back(*p);
+                                }
+                            }
+                            if (!filtered.empty())
+                            {
+                                directConnectInputIp = filtered;
+                                directConnectNotification = "PASTED IP FROM CLIPBOARD: " + filtered;
+                                directConnectNotifTimer = 3.5f;
+                                audioManager.PlayMenuConfirm();
+                            }
+                        }
+                        if (clip) SDL_free(clip);
+                    }
+                    else if (event.key.scancode == SDL_SCANCODE_C && !isCtrl)
+                    {
+                        SDL_SetClipboardText(myDetectedIp.c_str());
+                        directConnectNotification = "COPIED YOUR IP (" + myDetectedIp + ") TO CLIPBOARD!";
+                        directConnectNotifTimer = 3.5f;
+                        audioManager.PlayMenuConfirm();
+                    }
+                    else if (event.key.scancode == SDL_SCANCODE_RETURN || event.key.scancode == SDL_SCANCODE_KP_ENTER)
+                    {
+                        if (!directConnectInputIp.empty())
+                        {
+                            connectIp = directConnectInputIp;
+                            Overdrive::NetworkManager::SaveNetworkConfig("network.ini", "client", connectIp, netPort);
+                            network.StartClient(connectIp, netPort);
+                            mech.Respawn({ 0.0f, 2.0f, 40.0f }, 3.14159265f);
+                            gameState = GameState::Playing;
+                            renderer->ShowArenaModeBanner("CONNECTING TO: " + connectIp + "...", 4.0f);
+                            audioManager.PlayMenuConfirm();
+                        }
+                    }
+                    else if (event.key.scancode == SDL_SCANCODE_BACKSPACE)
+                    {
+                        if (!directConnectInputIp.empty())
+                        {
+                            directConnectInputIp.pop_back();
+                            audioManager.PlayMenuMove();
+                        }
+                    }
+                    else
+                    {
+                        char ch = 0;
+                        if (event.key.scancode >= SDL_SCANCODE_1 && event.key.scancode <= SDL_SCANCODE_9)
+                            ch = '1' + (event.key.scancode - SDL_SCANCODE_1);
+                        else if (event.key.scancode == SDL_SCANCODE_0) ch = '0';
+                        else if (event.key.scancode >= SDL_SCANCODE_KP_1 && event.key.scancode <= SDL_SCANCODE_KP_9)
+                            ch = '1' + (event.key.scancode - SDL_SCANCODE_KP_1);
+                        else if (event.key.scancode == SDL_SCANCODE_KP_0) ch = '0';
+                        else if (event.key.scancode == SDL_SCANCODE_PERIOD || event.key.scancode == SDL_SCANCODE_KP_PERIOD) ch = '.';
+
+                        if (ch != 0 && directConnectInputIp.length() < 21)
+                        {
+                            directConnectInputIp.push_back(ch);
+                            audioManager.PlayMenuMove();
+                        }
                     }
                 }
                 else if (gameState == GameState::Assemble)
@@ -560,6 +626,12 @@ int main(int argc, char* argv[])
                         mech.Respawn({ 0.0f, 1.2f, 0.0f }, 0.0f);
                         audioManager.PlayMenuConfirm();
                     }
+                    else if (event.key.scancode == SDL_SCANCODE_C && network.IsHost())
+                    {
+                        SDL_SetClipboardText(myDetectedIp.c_str());
+                        renderer->ShowArenaModeBanner("IP COPIED TO CLIPBOARD! SHARE: " + myDetectedIp, 4.0f);
+                        audioManager.PlayMenuConfirm();
+                    }
                     else if (event.key.scancode == SDL_SCANCODE_V)
                     {
                         camera.ToggleMode();
@@ -649,6 +721,54 @@ int main(int argc, char* argv[])
                     else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST || event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) // B
                     {
                         running = false;
+                    }
+                }
+                else if (gameState == GameState::DirectConnect)
+                {
+                    if (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH || event.gbutton.button == SDL_GAMEPAD_BUTTON_START) // A or Start
+                    {
+                        if (!directConnectInputIp.empty())
+                        {
+                            connectIp = directConnectInputIp;
+                            Overdrive::NetworkManager::SaveNetworkConfig("network.ini", "client", connectIp, netPort);
+                            network.StartClient(connectIp, netPort);
+                            mech.Respawn({ 0.0f, 2.0f, 40.0f }, 3.14159265f);
+                            gameState = GameState::Playing;
+                            renderer->ShowArenaModeBanner("CONNECTING TO: " + connectIp + "...", 4.0f);
+                            audioManager.PlayMenuConfirm();
+                        }
+                    }
+                    else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST || event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) // B or Back
+                    {
+                        gameState = GameState::MainMenu;
+                        audioManager.PlayMenuMove();
+                    }
+                    else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) // X (Paste)
+                    {
+                        char* clip = SDL_GetClipboardText();
+                        if (clip && strlen(clip) > 0)
+                        {
+                            std::string filtered;
+                            for (const char* p = clip; *p; ++p)
+                            {
+                                if ((*p >= '0' && *p <= '9') || *p == '.') filtered.push_back(*p);
+                            }
+                            if (!filtered.empty())
+                            {
+                                directConnectInputIp = filtered;
+                                directConnectNotification = "PASTED IP: " + filtered;
+                                directConnectNotifTimer = 3.5f;
+                                audioManager.PlayMenuConfirm();
+                            }
+                        }
+                        if (clip) SDL_free(clip);
+                    }
+                    else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) // Y (Copy self IP)
+                    {
+                        SDL_SetClipboardText(myDetectedIp.c_str());
+                        directConnectNotification = "COPIED YOUR IP: " + myDetectedIp;
+                        directConnectNotifTimer = 3.5f;
+                        audioManager.PlayMenuConfirm();
                     }
                 }
                 else if (gameState == GameState::Assemble)
@@ -860,6 +980,44 @@ int main(int argc, char* argv[])
 
             renderer->BeginFrame();
             renderer->RenderMainMenu(menu, camera, mech);
+            renderer->EndFrame(!vrActive);
+        }
+        else if (gameState == GameState::DirectConnect)
+        {
+            menu.Update(deltaTime);
+            if (directConnectNotifTimer > 0.0f)
+            {
+                directConnectNotifTimer -= deltaTime;
+                if (directConnectNotifTimer <= 0.0f)
+                {
+                    directConnectNotification = "";
+                }
+            }
+
+            menuCamAngle += deltaTime * 0.22f;
+            float camDist = 6.2f;
+            float camX = std::sin(menuCamAngle) * camDist;
+            float camZ = -std::cos(menuCamAngle) * camDist;
+            float camY = 2.2f;
+            camera.SetCustomView({ camX, camY, camZ }, { 0.0f, 1.2f, 0.0f });
+
+            if (vrActive && vrManager->HasValidTracking())
+            {
+                audioManager.UpdateListener(vrManager->GetHmdPosition(), vrManager->GetHmdForward(), XMFLOAT3(0.0f, 1.0f, 0.0f));
+                vrManager->RenderDirectConnectFrame(renderer.get(), directConnectInputIp, myDetectedIp, netPort, menu.GetAnimTime(), directConnectNotification, camera, mech);
+            }
+            else
+            {
+                XMFLOAT3 eyePos = camera.GetEyePosition();
+                XMFLOAT3 lookTarget = camera.GetLookTarget();
+                XMFLOAT3 fwd = { lookTarget.x - eyePos.x, lookTarget.y - eyePos.y, lookTarget.z - eyePos.z };
+                float len = std::sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z);
+                if (len > 0.001f) { fwd.x /= len; fwd.y /= len; fwd.z /= len; }
+                audioManager.UpdateListener(eyePos, fwd, XMFLOAT3(0.0f, 1.0f, 0.0f));
+            }
+
+            renderer->BeginFrame();
+            renderer->RenderDirectConnectMenu(camera, mech, directConnectInputIp, myDetectedIp, netPort, menu.GetAnimTime(), directConnectNotification);
             renderer->EndFrame(!vrActive);
         }
         else if (gameState == GameState::Assemble)

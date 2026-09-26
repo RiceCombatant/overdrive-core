@@ -81,11 +81,33 @@ namespace Overdrive
             float animTime
         );
 
+        // Direct IP Connect rendering (Tailscale / LAN)
+        void RenderDirectConnectMenu(
+            const Camera& camera,
+            const MechController& mech,
+            const std::string& inputIp,
+            const std::string& myTailscaleIp,
+            uint16_t port,
+            float animTime,
+            const std::string& notificationMessage
+        );
+
         void RenderVRMainMenu(
             const MenuSystem& menu,
             const XMMATRIX& view,
             const XMMATRIX& proj
         );
+
+        void RenderVRDirectConnectMenu(
+            const std::string& inputIp,
+            const std::string& myTailscaleIp,
+            uint16_t port,
+            float animTime,
+            const std::string& notificationMessage,
+            const XMMATRIX& view,
+            const XMMATRIX& proj
+        );
+
 
         // OpenXR Stereo VR Eye rendering
         void RenderVREye(
