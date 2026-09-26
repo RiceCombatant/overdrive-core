@@ -20,6 +20,12 @@ DirectX 11 + SDL3 + Jolt Physics + fastgltf + OpenXR PCVR 完全統合版。
    - 射撃時リコイル反動、照準仰角サーボ追従、ガトリングスピン、着地サスペンション
 6. **OpenXR PCVR 完全対応**
    - Meta Quest 3S / PCVR HMD による一人称コックピット立体視 (FPV) & 3DキャノピーHUD
+7. **ゲーム内完結 Tailscale マルチプレイ & DIRECT IP CONNECT 画面**
+   - 外部バッチやini編集不要！ゲーム内GUIだけでTailscale対戦に参加・ホスト可能
+   - **Tailscale IP自動検出**: PC上のTailscale IPv4（`100.x.x.x`）を自動検出し、画面上にワンキーコピー（`[C]` キー）付きで表示
+   - **ワンタッチペースト**: 友達のIPを `Ctrl+V` で即座に貼り付け＆入力IPの自動保存（次回ワンクリック再接続）
+   - ゲームパッド・VR両眼立体コックピット前面ホログラムUIにも完全対応
+
 
 #### 📦 同梱内容
 - `OverdriveCore.exe`: ゲーム本体 (Release最適化版)
