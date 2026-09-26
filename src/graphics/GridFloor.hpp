@@ -18,6 +18,7 @@ namespace Overdrive
         bool Initialize(ID3D11Device* device);
         bool InitializePhysics(PhysicsManager* physicsManager);
         void Render(ID3D11DeviceContext* context);
+        void RenderFloorOnly(ID3D11DeviceContext* context);
 
     private:
         ComPtr<ID3D11Buffer> m_lineVertexBuffer;

@@ -51,7 +51,8 @@ namespace Overdrive
         MechState    = 3,
         FireEvent    = 4,
         HitEvent     = 5,
-        Ping         = 6
+        Ping         = 6,
+        ArenaMode    = 7
     };
 
     constexpr uint32_t NET_MAGIC = 0x4F444332; // "ODC2" (Overdrive Core v2 - 4-Player Battle)
@@ -79,7 +80,7 @@ namespace Overdrive
         float velX, velY, velZ;
         float yaw, pitch, roll;
         float hp;
-        uint8_t flags; // bit0: Boost, bit1: QB, bit2: AB, bit3: Grounded
+        uint8_t flags; // bit0: Boost, bit1: QB, bit2: AB, bit3: Grounded, bit4: Staggered, bit5: BoostKick
     };
 
     struct FireEventPacket
@@ -96,6 +97,14 @@ namespace Overdrive
         uint8_t targetPlayerId;
         float damage;
         float hitX, hitY, hitZ;
+        float impact = 60.0f;
+        float directHitMult = 1.6f;
+    };
+
+    struct ArenaModePacket
+    {
+        PacketHeader header;
+        uint8_t arenaMode; // 0: Empty, 1: TargetDummies, 2: CombatBots
     };
 #pragma pack(pop)
 
@@ -110,7 +119,8 @@ namespace Overdrive
         void Update(float deltaTime, PhysicsManager* physics);
 
         void ApplyState(const MechStatePacket& packet);
-        void TakeDamage(float damage);
+        void TakeDamage(float damage, float impact = 60.0f, float directHitMult = 1.6f, AudioManager* audio = nullptr);
+        void ApplyKnockback(const XMFLOAT3& direction, float force);
         void Respawn(const XMFLOAT3& spawnPos, float yaw);
 
         // Getters for rendering, FCS lock-on, and HUD
@@ -133,7 +143,12 @@ namespace Overdrive
 
         float GetHp() const { return m_currentHp; }
         float GetMaxHp() const { return m_maxHp; }
-        float GetHpRatio() const { return m_currentHp / m_maxHp; }
+        float GetHpRatio() const { return m_maxHp > 0.0f ? (m_currentHp / m_maxHp) : 0.0f; }
+        float GetAcs() const { return m_currentAcs; }
+        float GetMaxAcs() const { return m_maxAcs; }
+        float GetAcsRatio() const { return m_maxAcs > 0.0f ? (m_currentAcs / m_maxAcs) : 0.0f; }
+        bool IsStaggered() const { return m_isStaggered; }
+        float GetStaggerTimer() const { return m_staggerTimer; }
         bool IsAlive() const { return !m_isDestroyed && m_isActive; }
         bool IsDestroyed() const { return m_isDestroyed; }
         bool IsHitFlashing() const { return m_hitFlashTimer > 0.0f; }
@@ -142,6 +157,7 @@ namespace Overdrive
         bool IsQuickBoost() const { return m_isQB; }
         bool IsAssaultBoost() const { return m_isAB; }
         bool IsAssaultBoosting() const { return m_isAB; }
+        bool IsBoostKicking() const { return m_isBoostKick; }
 
         JPH::BodyID GetBodyID() const { return m_bodyId; }
 
@@ -168,6 +184,7 @@ namespace Overdrive
         bool m_boostOn          = false;
         bool m_isQB             = false;
         bool m_isAB             = false;
+        bool m_isBoostKick      = false;
         bool m_isGrounded       = true;
 
         // Health & Combat
@@ -176,6 +193,15 @@ namespace Overdrive
         bool m_isDestroyed      = false;
         float m_hitFlashTimer   = 0.0f;
         float m_respawnTimer    = 0.0f;
+        bool m_hasReceivedFirstPacket = false;
+
+        // ACS & Stagger
+        float m_currentAcs      = 0.0f;
+        float m_maxAcs          = 1200.0f;
+        bool  m_isStaggered     = false;
+        float m_staggerTimer    = 0.0f;
+        float m_acsCooldown     = 0.0f;
+        const float c_staggerDuration = 2.4f;
 
         // Jolt physics collider for raycast bullet impacts
         JPH::BodyID m_bodyId;
@@ -229,14 +255,22 @@ namespace Overdrive
             WeaponSystem* weapons = nullptr,
             AudioManager* audio = nullptr,
             PhysicsManager* physics = nullptr,
-            MechController* localMech = nullptr
+            MechController* localMech = nullptr,
+            bool isStaggered = false,
+            bool isBoostKick = false
         );
 
         // Notify peers that local player fired weapon
         void SendFireEvent(bool isLeftArm, const XMFLOAT3& muzzlePos, const XMFLOAT3& targetPos);
 
         // Notify peers that bullet hit a target player
-        void SendHitEvent(uint8_t targetPlayerId, float damage, const XMFLOAT3& hitPos);
+        void SendHitEvent(uint8_t targetPlayerId, float damage, const XMFLOAT3& hitPos, float impact = 60.0f, float directHitMult = 1.6f);
+
+        // Arena mode synchronization (0: Empty, 1: TargetDummies, 2: CombatBots)
+        void BroadcastArenaMode(uint8_t mode);
+        uint8_t GetSyncedArenaMode() const { return m_syncedArenaMode; }
+        void SetSyncedArenaMode(uint8_t mode) { m_syncedArenaMode = mode; }
+        bool ConsumeArenaModeChanged() { bool c = m_arenaModeChanged; m_arenaModeChanged = false; return c; }
 
         // Status & Remote Mechs
         NetworkState GetState() const { return m_state; }
@@ -272,7 +306,9 @@ namespace Overdrive
             bool isBoost,
             bool isQB,
             bool isAB,
-            bool isGrounded
+            bool isGrounded,
+            bool isStaggered = false,
+            bool isBoostKick = false
         );
 
         void RelayPacket(const void* data, int size, const sockaddr_in& senderAddr);
@@ -302,6 +338,9 @@ namespace Overdrive
         float m_heartbeatTimer = 0.0f;
         float m_hostTimeoutTimer = 0.0f;
         const float c_timeoutDuration = 4.0f;
+
+        uint8_t m_syncedArenaMode = 1; // Default: TargetDummies
+        bool m_arenaModeChanged = false;
 
         // Remote mechs (one for each other player slot, max 3)
         std::vector<RemoteMech> m_remoteMechs;

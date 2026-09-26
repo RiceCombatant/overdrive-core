@@ -1,9 +1,19 @@
 # Build artifacts and dependencies
 build/
+build_release/
 bin/
 lib/
 out/
 dist/
+OverdriveCore_*/
+*.zip
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
 
 # Visual Studio / CMake temporary files
 .vs/
@@ -15,3 +25,4 @@ CMakeUserPresets.json
 *.log
 *.tmp
 *.dmp
+

@@ -49,14 +49,18 @@ namespace Overdrive
         HRESULT hr = device->CreateBuffer(&vbd, &vdata, m_lineVertexBuffer.GetAddressOf());
         if (FAILED(hr)) return false;
 
-        // 2. Generate Hangar Walls, Pillars & Test Obstacles (Ramps / Blocks)
+        // 2. Generate Tactical Combat Arena Structures
+        // (Shelters with roofs, Mega blocks, Barricades, Giant pillars, and Slopes)
         std::vector<Vertex> wallVertices;
         std::vector<uint32_t> wallIndices;
 
-        XMFLOAT4 wallColor     = { 0.20f, 0.22f, 0.25f, 1.0f };
-        XMFLOAT4 pillarColor   = { 0.28f, 0.30f, 0.35f, 1.0f };
-        XMFLOAT4 obstacleColor = { 0.30f, 0.34f, 0.40f, 1.0f };
-        XMFLOAT4 rampColor     = { 0.25f, 0.42f, 0.55f, 1.0f }; // Blue-tinted ramp
+        XMFLOAT4 wallColor       = { 0.18f, 0.20f, 0.24f, 1.0f }; // Perimeter boundary wall
+        XMFLOAT4 pillarColor     = { 0.25f, 0.28f, 0.35f, 1.0f }; // Giant columns & support pillars
+        XMFLOAT4 megaBlockColor  = { 0.22f, 0.26f, 0.32f, 1.0f }; // Large facility blocks & mega containers
+        XMFLOAT4 coverColor      = { 0.28f, 0.34f, 0.42f, 1.0f }; // Tactical cover walls & barricades
+        XMFLOAT4 roofColor       = { 0.32f, 0.36f, 0.44f, 1.0f }; // Protective overhead canopy roofs
+        XMFLOAT4 rampColor       = { 0.22f, 0.40f, 0.54f, 1.0f }; // Slope ramp
+        XMFLOAT4 hazardAmber     = { 0.88f, 0.65f, 0.15f, 1.0f }; // Industrial hazard warning trims
 
         auto addBox = [&](float cx, float cy, float cz, float sx, float sy, float sz, XMFLOAT4 col, float pitchRad = 0.0f) {
             uint32_t baseIdx = static_cast<uint32_t>(wallVertices.size());
@@ -95,30 +99,89 @@ namespace Overdrive
             }
         };
 
-        // Boundary walls
-        addBox(0.0f, 25.0f, 130.0f, 280.0f, 50.0f, 8.0f, wallColor);
+        // --- (A) Perimeter Boundary Walls (280m x 280m Arena) ---
+        addBox(0.0f, 25.0f,  130.0f, 280.0f, 50.0f, 8.0f, wallColor);
         addBox(0.0f, 25.0f, -130.0f, 280.0f, 50.0f, 8.0f, wallColor);
-        addBox(130.0f, 25.0f, 0.0f, 8.0f, 50.0f, 280.0f, wallColor);
+        addBox( 130.0f, 25.0f, 0.0f, 8.0f, 50.0f, 280.0f, wallColor);
         addBox(-130.0f, 25.0f, 0.0f, 8.0f, 50.0f, 280.0f, wallColor);
 
-        // Pillars along the back wall
+        // Buttress pillars along North perimeter wall
         for (float px = -110.0f; px <= 110.0f; px += 22.0f)
         {
             addBox(px, 25.0f, 124.0f, 6.0f, 50.0f, 6.0f, pillarColor);
         }
 
-        // --- Test Obstacles & Slopes ---
-        // 1. Test Ramp / Slope: 16m wide, 28m long, smoothly submerged into the floor at Y=0
-        // Pitch ~ 14.5 degrees (0.25 rad), seamless entry from floor to 6.5m high platform
+        // --- (B) Tactical Shelters with Overhead Canopy Roofs (Protects against vertical missile / aerial bombardment) ---
+        // Shelter 1: South-West Tactical Bunker (Walkable underneath, climbable roof)
+        // Roof Canopy: 26m wide x 24m deep at Y=8.5m (Clearance ~7.9m)
+        addBox(-18.0f, 8.5f, -15.0f, 26.0f, 1.2f, 24.0f, roofColor);
+        // Roof hazard edge trims
+        addBox(-18.0f, 9.15f, -26.9f, 26.0f, 0.2f, 0.4f, hazardAmber);
+        addBox(-18.0f, 9.15f,  -3.1f, 26.0f, 0.2f, 0.4f, hazardAmber);
+        // 4 Support Columns for Shelter 1
+        addBox(-29.5f, 4.0f, -25.5f, 2.2f, 8.0f, 2.2f, pillarColor);
+        addBox( -6.5f, 4.0f, -25.5f, 2.2f, 8.0f, 2.2f, pillarColor);
+        addBox(-29.5f, 4.0f,  -4.5f, 2.2f, 8.0f, 2.2f, pillarColor);
+        addBox( -6.5f, 4.0f,  -4.5f, 2.2f, 8.0f, 2.2f, pillarColor);
+
+        // Shelter 2: North-East Hangar Gantry Shelter
+        // Roof Canopy: 28m wide x 22m deep at Y=9.5m (Clearance ~8.9m)
+        addBox(22.0f, 9.5f, 28.0f, 28.0f, 1.2f, 22.0f, roofColor);
+        // Roof hazard edge trims
+        addBox(22.0f, 10.15f, 17.1f, 28.0f, 0.2f, 0.4f, hazardAmber);
+        addBox(22.0f, 10.15f, 38.9f, 28.0f, 0.2f, 0.4f, hazardAmber);
+        // 4 Support Columns for Shelter 2
+        addBox( 9.5f, 4.5f, 18.5f, 2.2f, 9.0f, 2.2f, pillarColor);
+        addBox(34.5f, 4.5f, 18.5f, 2.2f, 9.0f, 2.2f, pillarColor);
+        addBox( 9.5f, 4.5f, 37.5f, 2.2f, 9.0f, 2.2f, pillarColor);
+        addBox(34.5f, 4.5f, 37.5f, 2.2f, 9.0f, 2.2f, pillarColor);
+
+        // --- (C) Mega Blocks & Facility Containers (Large high-altitude climbable boxes) ---
+        // 1. Central-East Mega Cargo Block (18m x 11m x 22m, top at Y=11.0m)
+        addBox(38.0f, 5.5f, -12.0f, 18.0f, 11.0f, 22.0f, megaBlockColor);
+        // Top edge trim
+        addBox(38.0f, 11.05f, -1.1f, 17.6f, 0.2f, 0.4f, hazardAmber);
+
+        // 2. North-West Heavy Facility Block (20m x 13m x 18m, top at Y=13.0m)
+        addBox(-42.0f, 6.5f, 32.0f, 20.0f, 13.0f, 18.0f, megaBlockColor);
+
+        // 3. South-West Stepped Container Stack (Allows staged jump to high tier)
+        addBox(-28.0f, 2.5f, -48.0f, 16.0f, 5.0f, 12.0f, megaBlockColor); // Lower tier (5m)
+        addBox(-31.0f, 7.5f, -48.0f, 10.0f, 5.0f, 8.0f, coverColor);      // Upper tier (10m)
+
+        // 4. South-East Cargo Bunker (14m x 7m x 14m)
+        addBox(45.0f, 3.5f, -45.0f, 14.0f, 7.0f, 14.0f, megaBlockColor);
+
+        // --- (D) Tactical Cover Walls & Barricades (Ground-level breaking line-of-sight) ---
+        // 1. Central L-Shaped Barricade (Crucial firefight choke point)
+        addBox(-5.0f, 3.0f,  8.0f,  1.8f, 6.0f, 18.0f, coverColor); // North-South segment
+        addBox( 9.0f, 3.0f, -0.5f, 14.0f, 6.0f,  1.8f, coverColor); // East-West segment (offset eastward to leave origin (0,0) corridor completely clear)
+
+        // 2. North Trench Wall (22m wide x 6m high)
+        addBox(-10.0f, 3.0f, 55.0f, 22.0f, 6.0f, 2.0f, coverColor);
+
+        // 3. East Approach Barricade (18m wide x 5m high)
+        addBox(16.0f, 2.5f, -36.0f, 18.0f, 5.0f, 2.0f, coverColor);
+
+        // 4. South Perimeter Low Wall (16m wide x 4m high)
+        addBox(-2.0f, 2.0f, -55.0f, 16.0f, 4.0f, 1.8f, coverColor);
+
+        // 5. Mid-North Corner Bunker Wall
+        addBox(2.0f, 2.5f, 24.0f, 10.0f, 5.0f, 1.8f, coverColor);
+
+        // --- (E) Giant Columns & Power Pillars (For boost-slalom and circular dogfights) ---
+        addBox(-12.0f, 14.0f, 26.0f, 4.5f, 28.0f, 4.5f, pillarColor); // Pillar Alpha (28m high)
+        addBox( 14.0f, 14.0f,  2.0f, 4.5f, 28.0f, 4.5f, pillarColor); // Pillar Beta (28m high)
+        addBox(-48.0f, 16.0f, -6.0f, 5.0f, 32.0f, 5.0f, pillarColor); // Pillar Gamma (32m high)
+        addBox( 52.0f, 16.0f, 18.0f, 5.0f, 32.0f, 5.0f, pillarColor); // Pillar Delta (32m high)
+
+        // --- (F) Integrated Slope & Elevated Sky Platform ---
+        // 1. High-speed Boost Slope: 14m wide, 26m long, pitch ~ 14.5 deg (-0.25 rad)
         float rampPitch = 0.25f;
-        addBox(-25.0f, 3.0f, 25.5f, 16.0f, 0.6f, 28.0f, rampColor, -rampPitch);
+        addBox(-55.0f, 3.25f, 24.0f, 14.0f, 0.6f, 26.0f, rampColor, -rampPitch);
 
-        // 2. High Elevated Platform at the top of the ramp
-        addBox(-25.0f, 3.25f, 48.0f, 18.0f, 6.5f, 18.0f, obstacleColor);
-
-        // 3. Low Cover Blocks for QB Dash & Collision Impact Test
-        addBox(20.0f, 1.5f, 25.0f, 10.0f, 3.0f, 4.0f, obstacleColor);
-        addBox(35.0f, 2.5f, 40.0f, 8.0f, 5.0f, 8.0f, obstacleColor);
+        // 2. High Elevated Sky Deck at the top of the slope (Y = 7.0m)
+        addBox(-55.0f, 3.5f, 44.0f, 16.0f, 7.0f, 16.0f, megaBlockColor);
 
         m_wallIndexCount = static_cast<UINT>(wallIndices.size());
 
@@ -152,30 +215,80 @@ namespace Overdrive
         // 1. Static Ground Plane (Floor at Y = 0)
         physicsManager->CreateStaticBox({ 0.0f, -1.0f, 0.0f }, { 200.0f, 1.0f, 200.0f });
 
-        // 2. Arena Boundary Walls
+        // --- (A) Perimeter Boundary Walls ---
         physicsManager->CreateStaticBox({ 0.0f, 25.0f,  130.0f }, { 140.0f, 25.0f, 4.0f });
         physicsManager->CreateStaticBox({ 0.0f, 25.0f, -130.0f }, { 140.0f, 25.0f, 4.0f });
         physicsManager->CreateStaticBox({  130.0f, 25.0f, 0.0f }, { 4.0f, 25.0f, 140.0f });
         physicsManager->CreateStaticBox({ -130.0f, 25.0f, 0.0f }, { 4.0f, 25.0f, 140.0f });
 
-        // 3. Pillars
+        // North wall buttress pillars
         for (float px = -110.0f; px <= 110.0f; px += 22.0f)
         {
             physicsManager->CreateStaticBox({ px, 25.0f, 124.0f }, { 3.0f, 25.0f, 3.0f });
         }
 
-        // 4. Test Ramp (Slope): Seamlessly matches the mesh
+        // --- (B) Tactical Shelters with Overhead Canopy Roofs ---
+        // Shelter 1: South-West Bunker Roof (Solid physical roof blocks vertical shells / missiles)
+        physicsManager->CreateStaticBox({ -18.0f, 8.5f, -15.0f }, { 13.0f, 0.6f, 12.0f });
+        // Shelter 1: 4 Support Columns
+        physicsManager->CreateStaticBox({ -29.5f, 4.0f, -25.5f }, { 1.1f, 4.0f, 1.1f });
+        physicsManager->CreateStaticBox({  -6.5f, 4.0f, -25.5f }, { 1.1f, 4.0f, 1.1f });
+        physicsManager->CreateStaticBox({ -29.5f, 4.0f,  -4.5f }, { 1.1f, 4.0f, 1.1f });
+        physicsManager->CreateStaticBox({  -6.5f, 4.0f,  -4.5f }, { 1.1f, 4.0f, 1.1f });
+
+        // Shelter 2: North-East Hangar Gantry Roof
+        physicsManager->CreateStaticBox({ 22.0f, 9.5f, 28.0f }, { 14.0f, 0.6f, 11.0f });
+        // Shelter 2: 4 Support Columns
+        physicsManager->CreateStaticBox({  9.5f, 4.5f, 18.5f }, { 1.1f, 4.5f, 1.1f });
+        physicsManager->CreateStaticBox({ 34.5f, 4.5f, 18.5f }, { 1.1f, 4.5f, 1.1f });
+        physicsManager->CreateStaticBox({  9.5f, 4.5f, 37.5f }, { 1.1f, 4.5f, 1.1f });
+        physicsManager->CreateStaticBox({ 34.5f, 4.5f, 37.5f }, { 1.1f, 4.5f, 1.1f });
+
+        // --- (C) Mega Blocks & Facility Containers ---
+        // 1. Central-East Mega Cargo Block (18m x 11m x 22m)
+        physicsManager->CreateStaticBox({ 38.0f, 5.5f, -12.0f }, { 9.0f, 5.5f, 11.0f });
+
+        // 2. North-West Heavy Facility Block (20m x 13m x 18m)
+        physicsManager->CreateStaticBox({ -42.0f, 6.5f, 32.0f }, { 10.0f, 6.5f, 9.0f });
+
+        // 3. South-West Stepped Container Stack
+        physicsManager->CreateStaticBox({ -28.0f, 2.5f, -48.0f }, { 8.0f, 2.5f, 6.0f }); // Lower
+        physicsManager->CreateStaticBox({ -31.0f, 7.5f, -48.0f }, { 5.0f, 2.5f, 4.0f }); // Upper
+
+        // 4. South-East Cargo Bunker
+        physicsManager->CreateStaticBox({ 45.0f, 3.5f, -45.0f }, { 7.0f, 3.5f, 7.0f });
+
+        // --- (D) Tactical Cover Walls & Barricades ---
+        // 1. Central L-Shaped Barricade
+        physicsManager->CreateStaticBox({ -5.0f, 3.0f,  8.0f }, { 0.9f, 3.0f, 9.0f });
+        physicsManager->CreateStaticBox({  9.0f, 3.0f, -0.5f }, { 7.0f, 3.0f, 0.9f });
+
+        // 2. North Trench Wall
+        physicsManager->CreateStaticBox({ -10.0f, 3.0f, 55.0f }, { 11.0f, 3.0f, 1.0f });
+
+        // 3. East Approach Barricade
+        physicsManager->CreateStaticBox({ 16.0f, 2.5f, -36.0f }, { 9.0f, 2.5f, 1.0f });
+
+        // 4. South Perimeter Low Wall
+        physicsManager->CreateStaticBox({ -2.0f, 2.0f, -55.0f }, { 8.0f, 2.0f, 0.9f });
+
+        // 5. Mid-North Corner Bunker Wall
+        physicsManager->CreateStaticBox({ 2.0f, 2.5f, 24.0f }, { 5.0f, 2.5f, 0.9f });
+
+        // --- (E) Giant Columns & Power Pillars ---
+        physicsManager->CreateStaticBox({ -12.0f, 14.0f, 26.0f }, { 2.25f, 14.0f, 2.25f });
+        physicsManager->CreateStaticBox({  14.0f, 14.0f,  2.0f }, { 2.25f, 14.0f, 2.25f });
+        physicsManager->CreateStaticBox({ -48.0f, 16.0f, -6.0f }, { 2.5f,  16.0f, 2.5f });
+        physicsManager->CreateStaticBox({  52.0f, 16.0f, 18.0f }, { 2.5f,  16.0f, 2.5f });
+
+        // --- (F) Integrated Slope & Elevated Sky Platform ---
         float rampPitch = -0.25f;
         float qx = std::sin(rampPitch * 0.5f);
         float qw = std::cos(rampPitch * 0.5f);
-        physicsManager->CreateStaticBox({ -25.0f, 3.0f, 25.5f }, { 8.0f, 0.3f, 14.0f }, { qx, 0.0f, 0.0f, qw });
+        physicsManager->CreateStaticBox({ -55.0f, 3.25f, 24.0f }, { 7.0f, 0.3f, 13.0f }, { qx, 0.0f, 0.0f, qw });
+        physicsManager->CreateStaticBox({ -55.0f, 3.5f,  44.0f }, { 8.0f, 3.5f, 8.0f });
 
-        // 5. Elevated Platform & Cover Blocks
-        physicsManager->CreateStaticBox({ -25.0f, 3.25f, 48.0f }, { 9.0f, 3.25f, 9.0f });
-        physicsManager->CreateStaticBox({ 20.0f, 1.5f, 25.0f }, { 5.0f, 1.5f, 2.0f });
-        physicsManager->CreateStaticBox({ 35.0f, 2.5f, 40.0f }, { 4.0f, 2.5f, 4.0f });
-
-        std::cout << "[PHYSICS] Static scene colliders (Ground, Walls, Pillars, Slopes) created in Jolt Physics." << std::endl;
+        std::cout << "[PHYSICS] Tactical combat arena colliders (Shelters, Roofs, Mega Blocks, Cover Walls, Pillars) initialized in Jolt Physics." << std::endl;
         return true;
     }
 
@@ -194,5 +307,16 @@ namespace Overdrive
         context->IASetIndexBuffer(m_wallIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context->DrawIndexed(m_wallIndexCount, 0, 0);
+    }
+
+    void GridFloor::RenderFloorOnly(ID3D11DeviceContext* context)
+    {
+        UINT stride = sizeof(Vertex);
+        UINT offset = 0;
+
+        // Glowing cyber grid floor only (clean unobstructed hangar for Assemble and Main Menu)
+        context->IASetVertexBuffers(0, 1, m_lineVertexBuffer.GetAddressOf(), &stride, &offset);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+        context->Draw(m_lineVertexCount, 0);
     }
 }

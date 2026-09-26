@@ -23,6 +23,7 @@ namespace Overdrive
         CameraMode GetMode() const { return m_mode; }
 
         void Update(float deltaTime, const MechController& mech);
+        void SetCustomView(const XMFLOAT3& eyePos, const XMFLOAT3& lookTarget) { m_eyePos = eyePos; m_lookTarget = lookTarget; }
 
         XMMATRIX GetViewMatrix() const;
         XMMATRIX GetProjectionMatrix(float aspectRatio) const;

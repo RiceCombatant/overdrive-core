@@ -12,20 +12,25 @@ namespace Overdrive
 
     class PhysicsManager;
 
+    class AudioManager;
+
     class TargetDummy
     {
     public:
-        TargetDummy(const std::string& name, const XMFLOAT3& position, const XMFLOAT3& size, float maxHp = 400.0f);
+        TargetDummy(const std::string& name, const XMFLOAT3& position, const XMFLOAT3& size, float maxHp = 400.0f, float maxAcs = 600.0f);
 
         void InitializePhysics(PhysicsManager* physicsManager);
         void Update(float deltaTime, PhysicsManager* physicsManager);
-        void TakeDamage(float damage);
+        void TakeDamage(float damage, float impact = 60.0f, float directHitMult = 1.6f, AudioManager* audio = nullptr);
 
         // Getters
         const std::string& GetName() const { return m_name; }
         XMFLOAT3 GetPosition() const { return m_position; }
         XMFLOAT3 GetSize() const { return m_size; }
-        float GetHpRatio() const { return m_currentHp / m_maxHp; }
+        float GetHpRatio() const { return m_maxHp > 0.0f ? (m_currentHp / m_maxHp) : 0.0f; }
+        float GetAcsRatio() const { return m_maxAcs > 0.0f ? (m_currentAcs / m_maxAcs) : 0.0f; }
+        bool IsStaggered() const { return m_isStaggered; }
+        float GetStaggerTimer() const { return m_staggerTimer; }
         bool IsDestroyed() const { return m_isDestroyed; }
         bool IsAlive() const { return !m_isDestroyed; }
         bool IsHitFlashing() const { return m_hitFlashTimer > 0.0f; }
@@ -37,6 +42,14 @@ namespace Overdrive
         XMFLOAT3 m_size;
         float m_currentHp = 400.0f;
         const float m_maxHp = 400.0f;
+
+        // ACS & Stagger attributes
+        float m_currentAcs = 0.0f;
+        float m_maxAcs = 600.0f;
+        bool  m_isStaggered = false;
+        float m_staggerTimer = 0.0f;
+        float m_acsCooldown = 0.0f;
+        const float c_staggerDuration = 2.4f;
 
         float m_hitFlashTimer = 0.0f;
         bool m_isDestroyed = false;

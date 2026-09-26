@@ -71,6 +71,7 @@ namespace Overdrive
 
         // Body creation helpers for terrain/obstacles
         JPH::BodyID CreateStaticBox(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& halfExtent, const DirectX::XMFLOAT4& rotationQuat = { 0, 0, 0, 1 });
+        void SetBodyPosition(const JPH::BodyID& bodyId, const DirectX::XMFLOAT3& position);
 
         JPH::PhysicsSystem* GetPhysicsSystem() { return m_physicsSystem.get(); }
         JPH::TempAllocator* GetTempAllocator() { return m_tempAllocator.get(); }

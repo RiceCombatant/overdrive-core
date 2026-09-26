@@ -1,4 +1,5 @@
 #include "combat/TargetLockSystem.hpp"
+#include "combat/AIBotMech.hpp"
 #include "core/MechController.hpp"
 #include "audio/AudioManager.hpp"
 #include "network/NetworkManager.hpp"
@@ -31,24 +32,43 @@ namespace Overdrive
         }
     }
 
+    void TargetLockSystem::SetFcsModifiers(
+        float closeAssist,
+        float mediumAssist,
+        float longAssist,
+        float missileMod,
+        float armTrackingRate
+    )
+    {
+        m_fcsCloseAssist = closeAssist;
+        m_fcsMediumAssist = mediumAssist;
+        m_fcsLongAssist = longAssist;
+        m_fcsMissileLockMod = missileMod;
+        m_armTrackingRate = armTrackingRate;
+    }
+
     float TargetLockSystem::CalculateFcsTrackingSpeed(float distance) const
     {
         // AC6 FCS tuning characteristics:
-        // Close-range (< 130m): Very quick tracking & lock acquisition
-        // Medium-range (130m - 260m): Balanced tracking
-        // Long-range (> 260m): Slower reticle convergence
+        // Close-range (< 130m): Scaled by FCS Close-Range Assist
+        // Medium-range (130m - 260m): Scaled by FCS Medium-Range Assist
+        // Long-range (> 260m): Scaled by FCS Long-Range Assist
+        // Overall rate is also influenced by Arm Firearm Servo Tracking Rate
+        float baseRate = 12.0f;
         if (distance < 130.0f)
         {
-            return 18.0f;
+            baseRate = 18.0f * m_fcsCloseAssist;
         }
         else if (distance < 260.0f)
         {
-            return 12.0f;
+            baseRate = 12.0f * m_fcsMediumAssist;
         }
         else
         {
-            return 7.0f;
+            baseRate = 7.0f * m_fcsLongAssist;
         }
+
+        return baseRate * m_armTrackingRate;
     }
 
     void TargetLockSystem::Update(
@@ -61,7 +81,10 @@ namespace Overdrive
         AudioManager* audio,
         const XMMATRIX* overrideViewProj,
         const XMFLOAT3* overrideEyePos,
-        const std::vector<RemoteMech>* remoteMechs)
+        const std::vector<RemoteMech>* remoteMechs,
+        float lookStickX,
+        float lookStickY,
+        const std::vector<AIBotMech>* aiBots)
     {
         if (deltaTime <= 0.0f) return;
 
@@ -91,6 +114,8 @@ namespace Overdrive
             float screenDist;
             bool isRemoteMech;
             uint8_t remotePlayerId;
+            bool isAIBot;
+            uint8_t botId;
         };
         std::vector<TargetCandidate> candidates;
 
@@ -123,7 +148,42 @@ namespace Overdrive
                         float dz = pos.z - mechPos.z;
                         float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-                        candidates.push_back({ 1000 + static_cast<int>(rMech.GetPlayerId()), { ndcX, ndcY }, pos, worldDist, screenDist, true, rMech.GetPlayerId() });
+                        candidates.push_back({ 1000 + static_cast<int>(rMech.GetPlayerId()), { ndcX, ndcY }, pos, worldDist, screenDist, true, rMech.GetPlayerId(), false, 0 });
+                    }
+                }
+            }
+        }
+
+        // Check AI Combat Bots
+        if (aiBots)
+        {
+            for (const auto& bot : *aiBots)
+            {
+                if (!bot.IsAlive()) continue;
+
+                XMFLOAT3 pos = bot.GetPosition();
+                pos.y += 0.8f; // Aim at core center
+
+                XMVECTOR worldVec = XMVectorSet(pos.x, pos.y, pos.z, 1.0f);
+                XMVECTOR clipVec  = XMVector4Transform(worldVec, viewProj);
+                XMFLOAT4 clip;
+                XMStoreFloat4(&clip, clipVec);
+
+                if (clip.w > 0.1f)
+                {
+                    float ndcX = clip.x / clip.w;
+                    float ndcY = clip.y / clip.w;
+                    float ndcZ = clip.z / clip.w;
+
+                    if (ndcZ >= 0.0f && ndcZ <= 1.0f)
+                    {
+                        float screenDist = std::sqrt(ndcX * ndcX + ndcY * ndcY);
+                        float dx = pos.x - mechPos.x;
+                        float dy = pos.y - mechPos.y;
+                        float dz = pos.z - mechPos.z;
+                        float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                        candidates.push_back({ 2000 + static_cast<int>(bot.GetBotId()), { ndcX, ndcY }, pos, worldDist, screenDist, false, 0, true, bot.GetBotId() });
                     }
                 }
             }
@@ -157,13 +217,50 @@ namespace Overdrive
             float dz = pos.z - mechPos.z;
             float worldDist = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-            candidates.push_back({ i, { ndcX, ndcY }, pos, worldDist, screenDist, false, 0 });
+            candidates.push_back({ i, { ndcX, ndcY }, pos, worldDist, screenDist, false, 0, false, 0 });
         }
 
         // AC6 Target Switching Mechanic:
-        // When in Hard-Lock mode and player moves view away from current locked target (flick/swipe),
-        // switch lock-on to the next enemy in the direction of the swipe!
-        if (m_isHardLockEnabled && m_lockedTargetIndex >= 0 && mouseDeltaLen > 0.040f)
+        // Support both Gamepad Right-Stick Flick and Mouse Swipe/Flick!
+        if (m_targetSwitchCooldown > 0.0f)
+        {
+            m_targetSwitchCooldown -= deltaTime;
+        }
+
+        float stickMag = std::sqrt(lookStickX * lookStickX + lookStickY * lookStickY);
+        bool stickFlick = false;
+        float flickDirX = 0.0f;
+        float flickDirY = 0.0f;
+
+        // 1. Controller Right-Stick Flick Detection:
+        // Triggered on stick deflection (> 0.45) from neutral with debounce cooldown
+        if (stickMag > 0.45f)
+        {
+            if (!m_stickFlickTriggered && m_targetSwitchCooldown <= 0.0f)
+            {
+                stickFlick = true;
+                m_stickFlickTriggered = true;
+                m_targetSwitchCooldown = 0.28f;
+                flickDirX = lookStickX / stickMag;
+                flickDirY = -lookStickY / stickMag; // SDL stick Up (-Y) maps to Screen Up (+Y)
+            }
+        }
+        else if (stickMag < 0.25f)
+        {
+            m_stickFlickTriggered = false; // Reset trigger when stick returns near center
+        }
+
+        // 2. Mouse Fast Flick / Swipe Detection:
+        bool mouseFlick = false;
+        if (stickMag <= 0.15f && mouseDeltaLen > 0.038f && m_targetSwitchCooldown <= 0.0f)
+        {
+            mouseFlick = true;
+            m_targetSwitchCooldown = 0.22f;
+            flickDirX = yawDelta / mouseDeltaLen;
+            flickDirY = -pitchDelta / mouseDeltaLen;
+        }
+
+        if (m_isHardLockEnabled && m_lockedTargetIndex >= 0 && (stickFlick || mouseFlick))
         {
             XMFLOAT2 currentNdc = { 0.0f, 0.0f };
             for (const auto& c : candidates)
@@ -175,13 +272,8 @@ namespace Overdrive
                 }
             }
 
-            // Input swipe direction in screen NDC space
-            // yawDelta > 0 is moving right (+X), pitchDelta > 0 is moving down (-Y)
-            float inputDirX = yawDelta / mouseDeltaLen;
-            float inputDirY = -pitchDelta / mouseDeltaLen;
-
             int switchIdx = -1;
-            float bestDot = 0.15f; // Must be in the general swipe direction (> ~80 degrees)
+            float bestDot = 0.10f; // Must be in the general flick direction (> ~85 degrees)
             float bestScore = 999999.0f;
 
             for (const auto& c : candidates)
@@ -196,14 +288,13 @@ namespace Overdrive
                 toTargetX /= toTargetLen;
                 toTargetY /= toTargetLen;
 
-                float dot = inputDirX * toTargetX + inputDirY * toTargetY;
+                float dot = flickDirX * toTargetX + flickDirY * toTargetY;
                 if (dot > bestDot)
                 {
-                    float score = c.worldDist - dot * 80.0f;
+                    float score = -dot * 180.0f + c.worldDist * 0.4f + c.screenDist * 40.0f;
                     if (score < bestScore)
                     {
                         bestScore = score;
-                        bestDot = dot;
                         switchIdx = c.idx;
                     }
                 }
@@ -212,15 +303,10 @@ namespace Overdrive
             if (switchIdx >= 0)
             {
                 m_lockedTargetIndex = switchIdx;
+                m_prevLockedTargetIndex = switchIdx;
                 if (audio) audio->PlayLockOn();
-                std::cout << "[TARGET ASSIST] Switched lock-on to target #" << switchIdx << std::endl;
-            }
-            else if (mouseDeltaLen > 0.35f)
-            {
-                // Large manual movement with no other target in that direction disengages target assist
-                m_isHardLockEnabled = false;
-                m_lockedTargetIndex = -1;
-                std::cout << "[TARGET ASSIST] Disengaged due to manual camera flick" << std::endl;
+                std::cout << "[TARGET ASSIST] Switched lock-on to target #" << switchIdx
+                          << " (Via " << (stickFlick ? "Controller Stick Flick" : "Mouse Flick") << ")" << std::endl;
             }
         }
 
@@ -228,6 +314,8 @@ namespace Overdrive
         int bestIdx = -1;
         bool bestIsRemote = false;
         uint8_t bestPlayerId = 0;
+        bool bestIsAIBot = false;
+        uint8_t bestBotId = 0;
         float bestScore = 999999.0f;
         XMFLOAT2 bestNdc = { 0.0f, 0.0f };
         XMFLOAT3 bestWorldPos = { 0.0f, 0.0f, 0.0f };
@@ -240,7 +328,8 @@ namespace Overdrive
             {
                 float lockBonus = (m_isHardLockEnabled && m_lockedTargetIndex == c.idx) ? -800.0f : 0.0f;
                 float remoteBonus = c.isRemoteMech ? -500.0f : 0.0f; // Prioritize remote human opponent
-                float score = c.screenDist * 120.0f + c.worldDist + lockBonus + remoteBonus;
+                float botBonus = c.isAIBot ? -450.0f : 0.0f;        // Prioritize autonomous combat bot
+                float score = c.screenDist * 120.0f + c.worldDist + lockBonus + remoteBonus + botBonus;
 
                 if (score < bestScore)
                 {
@@ -248,6 +337,8 @@ namespace Overdrive
                     bestIdx = c.idx;
                     bestIsRemote = c.isRemoteMech;
                     bestPlayerId = c.remotePlayerId;
+                    bestIsAIBot = c.isAIBot;
+                    bestBotId = c.botId;
                     bestNdc = c.ndc;
                     bestWorldPos = c.worldPos;
                     bestDist = c.worldDist;
@@ -268,6 +359,8 @@ namespace Overdrive
             m_targetInfo.targetIndex = bestIdx;
             m_targetInfo.isRemoteMech = bestIsRemote;
             m_targetInfo.remotePlayerId = bestPlayerId;
+            m_targetInfo.isAIBot = bestIsAIBot;
+            m_targetInfo.botId = bestBotId;
             m_targetInfo.worldPos = bestWorldPos;
             m_targetInfo.screenNdc = bestNdc;
             m_targetInfo.distance = bestDist;
@@ -294,6 +387,10 @@ namespace Overdrive
         {
             m_targetInfo.hasTarget = false;
             m_targetInfo.targetIndex = -1;
+            m_targetInfo.isRemoteMech = false;
+            m_targetInfo.remotePlayerId = 0;
+            m_targetInfo.isAIBot = false;
+            m_targetInfo.botId = 0;
             m_targetInfo.isAimed = false;
 
             // Reticle smoothly returns to center when no target

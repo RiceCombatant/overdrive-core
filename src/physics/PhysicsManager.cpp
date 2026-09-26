@@ -146,4 +146,10 @@ namespace Overdrive
         JPH::BodyID bodyId = bodyInterface.CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
         return bodyId;
     }
+
+    void PhysicsManager::SetBodyPosition(const JPH::BodyID& bodyId, const DirectX::XMFLOAT3& position)
+    {
+        if (!m_physicsSystem || bodyId.IsInvalid()) return;
+        m_physicsSystem->GetBodyInterface().SetPosition(bodyId, JPH::RVec3(position.x, position.y, position.z), JPH::EActivation::DontActivate);
+    }
 }

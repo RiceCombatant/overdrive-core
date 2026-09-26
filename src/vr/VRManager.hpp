@@ -33,7 +33,11 @@ namespace Overdrive
     class TargetLockSystem;
     class D3D11Renderer;
     class RemoteMech;
+    class AIBotMech;
     class NetworkManager;
+    class Camera;
+    class MenuSystem;
+    class FrameSystem;
 
     struct VREyeData
     {
@@ -75,7 +79,16 @@ namespace Overdrive
             const std::vector<TargetDummy>& targets,
             const TargetLockSystem& lockSystem,
             const std::vector<RemoteMech>* remoteMechs = nullptr,
-            const NetworkManager* network = nullptr
+            const NetworkManager* network = nullptr,
+            const FrameSystem* frames = nullptr,
+            const std::vector<AIBotMech>* aiBots = nullptr
+        );
+
+        bool RenderMenuFrame(
+            D3D11Renderer* renderer,
+            const MenuSystem& menu,
+            const Camera& camera,
+            const MechController& mech
         );
 
         // Eye matrices (world space view & projection for left/right eye)

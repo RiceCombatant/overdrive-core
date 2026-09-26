@@ -70,12 +70,36 @@ namespace Overdrive
             m_hitFlashTimer -= deltaTime;
         }
 
+        if (m_isStaggered)
+        {
+            m_staggerTimer -= deltaTime;
+            if (m_staggerTimer <= 0.0f)
+            {
+                m_isStaggered = false;
+                m_currentAcs = 0.0f;
+                m_staggerTimer = 0.0f;
+            }
+        }
+        else if (m_currentAcs > 0.0f)
+        {
+            if (m_acsCooldown > 0.0f)
+            {
+                m_acsCooldown -= deltaTime;
+            }
+            else
+            {
+                m_currentAcs = std::max(0.0f, m_currentAcs - deltaTime * 320.0f);
+            }
+        }
+
         if (m_isDestroyed)
         {
             m_respawnTimer -= deltaTime;
             if (m_respawnTimer <= 0.0f)
             {
                 m_isDestroyed = false;
+                m_isStaggered = false;
+                m_currentAcs = 0.0f;
                 m_currentHp = m_maxHp;
             }
         }
@@ -126,20 +150,47 @@ namespace Overdrive
 
         m_currentHp   = packet.hp;
 
-        m_boostOn    = (packet.flags & 1) != 0;
-        m_isQB       = (packet.flags & 2) != 0;
-        m_isAB       = (packet.flags & 4) != 0;
-        m_isGrounded = (packet.flags & 8) != 0;
+        m_boostOn     = (packet.flags & 1) != 0;
+        m_isQB        = (packet.flags & 2) != 0;
+        m_isAB        = (packet.flags & 4) != 0;
+        m_isGrounded  = (packet.flags & 8) != 0;
+        if ((packet.flags & 16) != 0)
+        {
+            m_isStaggered = true;
+            m_currentAcs = m_maxAcs;
+        }
+        m_isBoostKick = (packet.flags & 32) != 0;
 
-        if (m_currentHp <= 0.0f && !m_isDestroyed)
+        // Remote mech revived/respawned by sender: clear destroyed state immediately
+        if (m_currentHp > 0.0f && m_isDestroyed)
+        {
+            m_isDestroyed = false;
+            m_isStaggered = false;
+            m_currentAcs = 0.0f;
+            m_respawnTimer = 0.0f;
+            m_currentPos = m_targetPos;
+            m_currentYaw = m_targetYaw;
+            m_currentPitch = m_targetPitch;
+            m_currentRoll = m_targetRoll;
+        }
+        else if (m_currentHp <= 0.0f && !m_isDestroyed)
         {
             m_isDestroyed = true;
+            m_isStaggered = false;
+            m_currentAcs = 0.0f;
             m_respawnTimer = 3.0f;
         }
 
-        if (!m_isActive)
+        // Distance check for large teleport / snap (e.g. initial connection or respawn)
+        float dx = m_targetPos.x - m_currentPos.x;
+        float dy = m_targetPos.y - m_currentPos.y;
+        float dz = m_targetPos.z - m_currentPos.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+
+        if (!m_isActive || !m_hasReceivedFirstPacket || distSq > (14.0f * 14.0f))
         {
             m_isActive = true;
+            m_hasReceivedFirstPacket = true;
             m_currentPos = m_targetPos;
             m_currentYaw = m_targetYaw;
             m_currentPitch = m_targetPitch;
@@ -147,13 +198,36 @@ namespace Overdrive
         }
     }
 
-    void RemoteMech::TakeDamage(float damage)
+    void RemoteMech::TakeDamage(float damage, float impact, float directHitMult, AudioManager* audio)
     {
-        m_currentHp = std::max(0.0f, m_currentHp - damage);
+        float finalDmg = damage;
+        if (m_isStaggered)
+        {
+            finalDmg = damage * directHitMult;
+        }
+        else
+        {
+            m_currentAcs += impact;
+            m_acsCooldown = 2.2f;
+            if (m_currentAcs >= m_maxAcs)
+            {
+                m_isStaggered = true;
+                m_currentAcs = m_maxAcs;
+                m_staggerTimer = c_staggerDuration;
+                if (audio)
+                {
+                    audio->PlayStaggerBreak(m_currentPos);
+                }
+            }
+        }
+
+        m_currentHp = std::max(0.0f, m_currentHp - finalDmg);
         m_hitFlashTimer = 0.15f;
         if (m_currentHp <= 0.0f && !m_isDestroyed)
         {
             m_isDestroyed = true;
+            m_isStaggered = false;
+            m_currentAcs = 0.0f;
             m_respawnTimer = 3.0f;
         }
     }
@@ -162,11 +236,29 @@ namespace Overdrive
     {
         m_currentHp = m_maxHp;
         m_isDestroyed = false;
+        m_isStaggered = false;
+        m_currentAcs = 0.0f;
+        m_staggerTimer = 0.0f;
         m_currentPos = spawnPos;
         m_targetPos = spawnPos;
         m_currentYaw = yaw;
         m_targetYaw = yaw;
         m_velocity = { 0.0f, 0.0f, 0.0f };
+        m_hasReceivedFirstPacket = true;
+    }
+
+    void RemoteMech::ApplyKnockback(const XMFLOAT3& direction, float force)
+    {
+        float len = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (len > 0.001f)
+        {
+            m_velocity.x += (direction.x / len) * force;
+            m_velocity.y += (direction.y / len) * (force * 0.35f) + 4.5f;
+            m_velocity.z += (direction.z / len) * force;
+            m_targetPos.x += (direction.x / len) * (force * 0.25f);
+            m_targetPos.z += (direction.z / len) * (force * 0.25f);
+            m_isGrounded = false;
+        }
     }
 
     // =========================================================================
@@ -432,7 +524,9 @@ namespace Overdrive
         bool isBoost,
         bool isQB,
         bool isAB,
-        bool isGrounded)
+        bool isGrounded,
+        bool isStaggered,
+        bool isBoostKick)
     {
         MechStatePacket pkt = {};
         pkt.header.magic = NET_MAGIC;
@@ -454,10 +548,12 @@ namespace Overdrive
         pkt.hp    = localHp;
 
         pkt.flags = 0;
-        if (isBoost)    pkt.flags |= 1;
-        if (isQB)       pkt.flags |= 2;
-        if (isAB)       pkt.flags |= 4;
-        if (isGrounded) pkt.flags |= 8;
+        if (isBoost)     pkt.flags |= 1;
+        if (isQB)        pkt.flags |= 2;
+        if (isAB)        pkt.flags |= 4;
+        if (isGrounded)  pkt.flags |= 8;
+        if (isStaggered) pkt.flags |= 16;
+        if (isBoostKick) pkt.flags |= 32;
 
         if (m_role == NetworkRole::Host)
         {
@@ -507,7 +603,7 @@ namespace Overdrive
         }
     }
 
-    void NetworkManager::SendHitEvent(uint8_t targetPlayerId, float damage, const XMFLOAT3& hitPos)
+    void NetworkManager::SendHitEvent(uint8_t targetPlayerId, float damage, const XMFLOAT3& hitPos, float impact, float directHitMult)
     {
         HitEventPacket pkt = {};
         pkt.header.magic = NET_MAGIC;
@@ -518,6 +614,33 @@ namespace Overdrive
         pkt.hitX = hitPos.x;
         pkt.hitY = hitPos.y;
         pkt.hitZ = hitPos.z;
+        pkt.impact = impact;
+        pkt.directHitMult = directHitMult;
+
+        if (m_role == NetworkRole::Host)
+        {
+            for (const auto& slot : m_clientSlots)
+            {
+                if (slot.active)
+                {
+                    SendPacketTo(&pkt, sizeof(pkt), slot.addr);
+                }
+            }
+        }
+        else if (m_role == NetworkRole::Client && m_hasHostAddr)
+        {
+            SendPacketTo(&pkt, sizeof(pkt), m_hostAddr);
+        }
+    }
+
+    void NetworkManager::BroadcastArenaMode(uint8_t mode)
+    {
+        m_syncedArenaMode = mode;
+        ArenaModePacket pkt = {};
+        pkt.header.magic = NET_MAGIC;
+        pkt.header.type = PacketType::ArenaMode;
+        pkt.header.senderId = m_localPlayerId;
+        pkt.arenaMode = mode;
 
         if (m_role == NetworkRole::Host)
         {
@@ -557,7 +680,9 @@ namespace Overdrive
             weapons,
             audio,
             physics,
-            &localMech
+            &localMech,
+            localMech.IsStaggered(),
+            localMech.IsBoostKicking()
         );
     }
 
@@ -576,7 +701,9 @@ namespace Overdrive
         WeaponSystem* weapons,
         AudioManager* audio,
         PhysicsManager* physics,
-        MechController* localMech)
+        MechController* localMech,
+        bool isStaggered,
+        bool isBoostKick)
     {
         if (m_state == NetworkState::Offline) return;
 
@@ -640,7 +767,7 @@ namespace Overdrive
         }
 
         // 4. Send local player state (~60Hz)
-        SendStatePacket(localPos, localVel, localYaw, localPitch, localRoll, localHp, isBoost, isQB, isAB, isGrounded);
+        SendStatePacket(localPos, localVel, localYaw, localPitch, localRoll, localHp, isBoost, isQB, isAB, isGrounded, isStaggered, isBoostKick);
     }
 
     void NetworkManager::ProcessIncomingPackets(
@@ -699,6 +826,12 @@ namespace Overdrive
                                 m_clientSlots[i].playerId = static_cast<uint8_t>(i + 1); // 1, 2, 3
                                 m_clientSlots[i].timeoutTimer = 0.0f;
 
+                                XMFLOAT3 initPos = { 0.0f, 2.0f, 40.0f };
+                                float initYaw = 3.14159265f;
+                                if (m_clientSlots[i].playerId == 2) { initPos = { 40.0f, 2.0f, 0.0f }; initYaw = -1.5707963f; }
+                                else if (m_clientSlots[i].playerId == 3) { initPos = { -40.0f, 2.0f, 0.0f }; initYaw = 1.5707963f; }
+
+                                m_remoteMechs[m_clientSlots[i].playerId].Respawn(initPos, initYaw);
                                 m_remoteMechs[m_clientSlots[i].playerId].SetActive(true);
                                 m_state = NetworkState::Connected;
 
@@ -719,6 +852,14 @@ namespace Overdrive
                         ack.header.senderId = 0; // From Host
                         ack.assignedId = m_clientSlots[clientIndex].playerId;
                         SendPacketTo(&ack, sizeof(ack), senderAddr);
+
+                        // Also send current ArenaMode to newly joined client
+                        ArenaModePacket arenaPkt = {};
+                        arenaPkt.header.magic = NET_MAGIC;
+                        arenaPkt.header.type = PacketType::ArenaMode;
+                        arenaPkt.header.senderId = 0;
+                        arenaPkt.arenaMode = m_syncedArenaMode;
+                        SendPacketTo(&arenaPkt, sizeof(arenaPkt), senderAddr);
                     }
                     continue;
                 }
@@ -735,6 +876,12 @@ namespace Overdrive
                 {
                     const auto* statePkt = reinterpret_cast<const MechStatePacket*>(buffer);
                     m_remoteMechs[senderPlayerId].ApplyState(*statePkt);
+                }
+                else if (header->type == PacketType::ArenaMode && bytesRecv >= static_cast<int>(sizeof(ArenaModePacket)))
+                {
+                    const auto* arenaPkt = reinterpret_cast<const ArenaModePacket*>(buffer);
+                    m_syncedArenaMode = arenaPkt->arenaMode;
+                    m_arenaModeChanged = true;
                 }
                 else if (header->type == PacketType::FireEvent && bytesRecv >= static_cast<int>(sizeof(FireEventPacket)))
                 {
@@ -757,12 +904,13 @@ namespace Overdrive
                     const auto* hitPkt = reinterpret_cast<const HitEventPacket*>(buffer);
                     if (hitPkt->targetPlayerId == m_localPlayerId && localMech)
                     {
-                        localMech->TakeDamage(hitPkt->damage);
-                        if (audio) audio->PlayExplosion({ hitPkt->hitX, hitPkt->hitY, hitPkt->hitZ }, 1.25f);
+                        XMFLOAT3 hitPos = { hitPkt->hitX, hitPkt->hitY, hitPkt->hitZ };
+                        localMech->TakeDamage(hitPkt->damage, hitPkt->impact, hitPkt->directHitMult, &hitPos, audio);
+                        if (audio) audio->PlayExplosion(hitPos, 1.25f);
                     }
                     else if (hitPkt->targetPlayerId < MAX_PLAYERS)
                     {
-                        m_remoteMechs[hitPkt->targetPlayerId].TakeDamage(hitPkt->damage);
+                        m_remoteMechs[hitPkt->targetPlayerId].TakeDamage(hitPkt->damage, hitPkt->impact, hitPkt->directHitMult, audio);
                     }
                 }
             }
@@ -778,7 +926,8 @@ namespace Overdrive
                     const auto* ack = reinterpret_cast<const HandshakePacket*>(buffer);
                     m_localPlayerId = ack->assignedId;
                     m_state = NetworkState::Connected;
-                    m_remoteMechs[0].SetActive(true); // Host is active
+                    m_remoteMechs[0].Respawn({ 0.0f, 2.0f, -40.0f }, 0.0f); // Host is active at North spawn
+                    m_remoteMechs[0].SetActive(true);
 
                     std::cout << "========================================================" << std::endl;
                     std::cout << " [NETWORK] CONNECTED TO 4-PLAYER BATTLE! Assigned Player ID: "
@@ -804,6 +953,12 @@ namespace Overdrive
                     const auto* statePkt = reinterpret_cast<const MechStatePacket*>(buffer);
                     m_remoteMechs[senderId].ApplyState(*statePkt);
                 }
+                else if (header->type == PacketType::ArenaMode && bytesRecv >= static_cast<int>(sizeof(ArenaModePacket)))
+                {
+                    const auto* arenaPkt = reinterpret_cast<const ArenaModePacket*>(buffer);
+                    m_syncedArenaMode = arenaPkt->arenaMode;
+                    m_arenaModeChanged = true;
+                }
                 else if (header->type == PacketType::FireEvent && bytesRecv >= static_cast<int>(sizeof(FireEventPacket)))
                 {
                     const auto* firePkt = reinterpret_cast<const FireEventPacket*>(buffer);
@@ -825,12 +980,13 @@ namespace Overdrive
                     const auto* hitPkt = reinterpret_cast<const HitEventPacket*>(buffer);
                     if (hitPkt->targetPlayerId == m_localPlayerId && localMech)
                     {
-                        localMech->TakeDamage(hitPkt->damage);
-                        if (audio) audio->PlayExplosion({ hitPkt->hitX, hitPkt->hitY, hitPkt->hitZ }, 1.25f);
+                        XMFLOAT3 hitPos = { hitPkt->hitX, hitPkt->hitY, hitPkt->hitZ };
+                        localMech->TakeDamage(hitPkt->damage, hitPkt->impact, hitPkt->directHitMult, &hitPos, audio);
+                        if (audio) audio->PlayExplosion(hitPos, 1.25f);
                     }
                     else if (hitPkt->targetPlayerId < MAX_PLAYERS)
                     {
-                        m_remoteMechs[hitPkt->targetPlayerId].TakeDamage(hitPkt->damage);
+                        m_remoteMechs[hitPkt->targetPlayerId].TakeDamage(hitPkt->damage, hitPkt->impact, hitPkt->directHitMult, audio);
                     }
                 }
             }

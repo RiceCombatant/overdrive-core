@@ -63,34 +63,56 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(OpenXR)
 
+# fastgltf (High-performance C++20 glTF 2.0 / GLB parser)
+set(FASTGLTF_DOWNLOAD_SIMDJSON ON CACHE INTERNAL "")
+FetchContent_Declare(
+    fastgltf
+    GIT_REPOSITORY https://github.com/spnda/fastgltf.git
+    GIT_TAG        v0.8.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(fastgltf)
+
 # Source files
 set(SOURCES
     src/main.cpp
     src/graphics/D3D11Renderer.cpp
     src/graphics/Camera.cpp
     src/graphics/GridFloor.cpp
+    src/graphics/ModelLoader.cpp
     src/core/MechController.cpp
     src/physics/PhysicsManager.cpp
     src/combat/WeaponSystem.cpp
     src/combat/TargetDummy.cpp
     src/combat/TargetLockSystem.cpp
+    src/combat/AIBotMech.cpp
     src/audio/AudioManager.cpp
     src/vr/VRManager.cpp
     src/network/NetworkManager.cpp
+    src/ui/MenuSystem.cpp
+    src/core/FrameSystem.cpp
+    src/core/InternalSystem.cpp
+    src/core/LoadoutManager.cpp
 )
 
 set(HEADERS
     src/graphics/D3D11Renderer.hpp
     src/graphics/Camera.hpp
     src/graphics/GridFloor.hpp
+    src/graphics/ModelLoader.hpp
     src/core/MechController.hpp
+    src/core/FrameSystem.hpp
+    src/core/InternalSystem.hpp
+    src/core/LoadoutManager.hpp
     src/physics/PhysicsManager.hpp
     src/combat/WeaponSystem.hpp
     src/combat/TargetDummy.hpp
     src/combat/TargetLockSystem.hpp
+    src/combat/AIBotMech.hpp
     src/audio/AudioManager.hpp
     src/vr/VRManager.hpp
     src/network/NetworkManager.hpp
+    src/ui/MenuSystem.hpp
     src/math/MathTypes.hpp
 )
 
@@ -113,6 +135,7 @@ target_link_libraries(OverdriveCore PRIVATE
     SDL3::SDL3
     Jolt
     OpenXR::openxr_loader
+    fastgltf::fastgltf
     d3d11
     dxgi
     d3dcompiler

@@ -40,8 +40,11 @@ float4 PSMain(PS_INPUT input) : SV_TARGET
 {
     if (CustomParams.x < 0.5f)
     {
-        // Unlit / Emissive (for Cyber Grid lines and UI elements)
-        return input.Color;
+        // Unlit / Emissive (for Cyber Grid lines, UI, and Thruster Jet Plumes)
+        float3 tint = (CustomParams.y + CustomParams.z + CustomParams.w > 0.001f)
+                    ? CustomParams.yzw
+                    : float3(1.0f, 1.0f, 1.0f);
+        return float4(input.Color.rgb * tint, input.Color.a);
     }
     
     // Directional light from top-right-front (AC Test Hangar lighting)
